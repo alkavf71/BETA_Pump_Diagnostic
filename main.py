@@ -1,25 +1,38 @@
-
 import streamlit as st
+from modules.asset_database import get_asset_list, get_asset_details
+# Import Modules UI
 from modules.inspection import dashboard as inspection_dashboard
-# from modules.commissioning import dashboard as comm_dashboard # (Nanti diaktifkan)
+# from modules.commissioning import dashboard as commissioning_dashboard # (Nanti dibuat)
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Reliability Pro Enterprise", layout="wide", page_icon="🏭")
 
-# --- SIDEBAR MENU UTAMA ---
+# --- SIDEBAR: ASSET SELECTION ---
 st.sidebar.title("🏭 Reliability Pro")
-st.sidebar.caption("Enterprise Asset Management")
+st.sidebar.subheader("Asset Selection")
 
-mode = st.sidebar.radio("Pilih Mode Kerja:", ["🛠️ INSPEKSI RUTIN", "🚀 COMMISSIONING"])
+# 1. Pilih Aset dari Database
+selected_tag = st.sidebar.selectbox("Pilih Aset / Tag Number:", get_asset_list())
+asset_data = get_asset_details(selected_tag)
+
+# Tampilkan Info Aset di Sidebar (Biar user yakin)
+with st.sidebar.expander("ℹ️ Spesifikasi Aset", expanded=True):
+    st.write(f"**Nama:** {asset_data.name}")
+    st.write(f"**Type:** {asset_data.pump_type}")
+    st.write(f"**Power:** {asset_data.power_kw} kW")
+    st.write(f"**RPM:** {asset_data.rpm}")
+    st.markdown(f"**Vib Limit:** `{asset_data.vib_limit_warning} mm/s`")
 
 st.sidebar.markdown("---")
 
-# --- ROUTING LOGIC ---
-if mode == "🛠️ INSPEKSI RUTIN":
-    # Jalankan Module Inspeksi
-    inspection_dashboard.run()
+# --- MAIN MODE SELECTION ---
+app_mode = st.sidebar.radio("Pilih Mode Aplikasi:", ["🛠️ INSPEKSI RUTIN", "🚀 COMMISSIONING"])
 
-elif mode == "🚀 COMMISSIONING":
-    st.title("🚀 Mode Commissioning")
-    st.info("Modul Commissioning sedang dalam pengembangan (Next Step).")
-    # comm_dashboard.run() # (Nanti diaktifkan)
+if app_mode == "🛠️ INSPEKSI RUTIN":
+    # Jalankan Dashboard Inspeksi dengan membawa data aset
+    inspection_dashboard.run(asset_data)
+
+elif app_mode == "🚀 COMMISSIONING":
+    st.title(f"🚀 Commissioning Mode: {asset_data.name}")
+    st.info("Modul Commissioning (API 676 / API 610 Check) akan dibangun selanjutnya.")
+    # commissioning_dashboard.run(asset_data)
