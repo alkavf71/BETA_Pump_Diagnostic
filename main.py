@@ -60,8 +60,7 @@ if mode == "🛠️ INSPEKSI RUTIN":
 
     # Tab Menu
     tab1, tab2, tab3 = st.tabs(["⚙️ MEKANIKAL & HIDROLIK", "⚡ ELEKTRIKAL", "👁️ VISUAL"])
-
-    # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
     # TAB 1: MEKANIKAL (Vibrasi, Suhu, Noise, Hidrolik)
     # --------------------------------------------------------------------------
     with tab1:
@@ -76,16 +75,17 @@ if mode == "🛠️ INSPEKSI RUTIN":
                 c1a, c1b = st.columns(2)
                 with c1a:
                     st.caption("Drive End (DE)")
-                    m_de_h = st.number_input("M-DE Horiz", 0.8)
-                    m_de_v = st.number_input("M-DE Vert", 0.2)
-                    m_de_a = st.number_input("M-DE Axial", 0.5)
-                    t_m_de = st.number_input("Temp M-DE (°C)", 45.0)
+                    # Perbaikan: Tambahkan 'value=' agar angka 0.8 jadi default, bukan minimum
+                    m_de_h = st.number_input("M-DE Horiz", value=0.8, step=0.1, min_value=0.0)
+                    m_de_v = st.number_input("M-DE Vert", value=0.2, step=0.1, min_value=0.0)
+                    m_de_a = st.number_input("M-DE Axial", value=0.5, step=0.1, min_value=0.0)
+                    t_m_de = st.number_input("Temp M-DE (°C)", value=45.0, step=1.0, min_value=0.0)
                 with c1b:
                     st.caption("Non-Drive End (NDE)")
-                    m_nde_h = st.number_input("M-NDE Horiz", 0.9)
-                    m_nde_v = st.number_input("M-NDE Vert", 0.3)
-                    m_nde_a = st.number_input("M-NDE Axial", 0.4)
-                    t_m_nde = st.number_input("Temp M-NDE (°C)", 42.0)
+                    m_nde_h = st.number_input("M-NDE Horiz", value=0.9, step=0.1, min_value=0.0)
+                    m_nde_v = st.number_input("M-NDE Vert", value=0.3, step=0.1, min_value=0.0)
+                    m_nde_a = st.number_input("M-NDE Axial", value=0.4, step=0.1, min_value=0.0)
+                    t_m_nde = st.number_input("Temp M-NDE (°C)", value=42.0, step=1.0, min_value=0.0)
 
             # 2. INPUT DRIVEN (POMPA)
             with col2:
@@ -93,37 +93,37 @@ if mode == "🛠️ INSPEKSI RUTIN":
                 c2a, c2b = st.columns(2)
                 with c2a:
                     st.caption("Drive End (DE)")
-                    p_de_h = st.number_input("P-DE Horiz", 1.2)
-                    p_de_v = st.number_input("P-DE Vert", 0.8)
-                    p_de_a = st.number_input("P-DE Axial", 0.6)
-                    t_p_de = st.number_input("Temp P-DE (°C)", 40.0)
+                    p_de_h = st.number_input("P-DE Horiz", value=1.2, step=0.1, min_value=0.0)
+                    p_de_v = st.number_input("P-DE Vert", value=0.8, step=0.1, min_value=0.0)
+                    p_de_a = st.number_input("P-DE Axial", value=0.6, step=0.1, min_value=0.0)
+                    t_p_de = st.number_input("Temp P-DE (°C)", value=40.0, step=1.0, min_value=0.0)
                 with c2b:
                     st.caption("Non-Drive End (NDE)")
-                    p_nde_h = st.number_input("P-NDE Horiz", 0.7)
-                    p_nde_v = st.number_input("P-NDE Vert", 0.4)
-                    p_nde_a = st.number_input("P-NDE Axial", 0.3)
-                    t_p_nde = st.number_input("Temp P-NDE (°C)", 38.0)
+                    p_nde_h = st.number_input("P-NDE Horiz", value=0.7, step=0.1, min_value=0.0)
+                    p_nde_v = st.number_input("P-NDE Vert", value=0.4, step=0.1, min_value=0.0)
+                    p_nde_a = st.number_input("P-NDE Axial", value=0.3, step=0.1, min_value=0.0)
+                    t_p_nde = st.number_input("Temp P-NDE (°C)", value=38.0, step=1.0, min_value=0.0)
             
             st.markdown("---")
             
-            # 3. INPUT HIDROLIK & NOISE (Dibuat berdampingan)
+            # 3. INPUT HIDROLIK & NOISE
             c_bot1, c_bot2 = st.columns(2)
             
             with c_bot1:
                 st.subheader("3. Performa Hidrolik (Pressure)")
                 cp1, cp2, cp3 = st.columns(3)
+                # Pressure bisa negatif (Vakum) di suction, jadi min_value biarkan default/None
                 p_in = cp1.number_input("Suction (Bar):", value=0.5, step=0.1)
                 p_out = cp2.number_input("Discharge (Bar):", value=4.5, step=0.1)
-                sg = cp3.number_input("SG Fluid:", value=0.85, step=0.01)
+                sg = cp3.number_input("SG Fluid:", value=0.85, step=0.01, min_value=0.1)
                 
-                # Input Design Head (Nanti bisa diambil otomatis dari DB jika data lengkap)
-                design_head = st.number_input("Rated Head Design (m):", value=50.0, help="Lihat Nameplate")
+                design_head = st.number_input("Rated Head Design (m):", value=50.0, step=1.0, min_value=1.0)
                 
             with c_bot2:
                 st.subheader("4. Akustik (Noise)")
                 cn1, cn2 = st.columns(2)
-                dba_val = cn1.number_input("Sound Level (dBA):", value=80.0, step=0.1)
-                dba_base = cn2.number_input("Baseline (dBA):", value=78.0, step=0.1)
+                dba_val = cn1.number_input("Sound Level (dBA):", value=80.0, step=0.1, min_value=0.0)
+                dba_base = cn2.number_input("Baseline (dBA):", value=78.0, step=0.1, min_value=0.0)
                 noise_type = st.selectbox("Jenis Suara:", ["Normal / Halus", "Kavitasi", "Bearing Defect", "Mencicit"])
 
             submit_mech = st.form_submit_button("🔍 ANALISA KESEHATAN MEKANIKAL FULL")
