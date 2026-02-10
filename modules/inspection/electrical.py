@@ -45,21 +45,22 @@ class ElectricalInspector:
         faults = []
         status = "NORMAL"
 
-        # A. Cek Voltage Unbalance (Musuh Utama Motor)
+# A. Cek Voltage Unbalance (IEC 60034-1)
         if v_unbal > self.limit_v_unbalance_trip:
             faults.append({
                 "name": "CRITICAL VOLTAGE UNBALANCE",
                 "val": f"{v_unbal:.2f}%",
-                "desc": "Ketidakseimbangan tegangan sangat tinggi (>5%). Motor cepat panas/terbakar.",
-                "action": "🔴 STOP MOTOR. Cek Trafo & Koneksi Panel (Loose Connection)."
+                "desc": "Bahaya! Unbalance > 5% (Luar Zone B). Risiko lilitan terbakar.",
+                "action": "🔴 STOP MOTOR. Cek Sumber Listrik."
             })
             status = "CRITICAL"
+            
         elif v_unbal > self.limit_v_unbalance_warn:
             faults.append({
                 "name": "VOLTAGE UNBALANCE",
                 "val": f"{v_unbal:.2f}%",
-                "desc": "Tegangan tidak seimbang (>1%). Perlu Derating beban.",
-                "action": "⚠️ Cek pembagian beban 1-fasa di panel. Cek kabel supply."
+                "desc": "Unbalance > 2% (Masuk Zone B). Perlu Derating beban.",
+                "action": "⚠️ Cek pembagian beban 1-fasa. Kurangi beban motor."
             })
             if status == "NORMAL": status = "WARNING"
 
