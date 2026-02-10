@@ -140,14 +140,21 @@ if mode == "🛠️ INSPEKSI RUTIN":
                     hide_index=True
                 )
                 
-                # Tampilkan Diagnosa (Jika Ada)
+# Tampilkan Diagnosa (Jika Ada)
                 if faults:
                     st.error("🚨 **DIAGNOSA KERUSAKAN TERDETEKSI:**")
                     for f in faults:
-                        with st.expander(f"⚠️ {f['desc']} (Klik Detail)", expanded=True):
-                            st.markdown(f"**Penyebab:** {f['desc']}")
-                            st.markdown(f"**Rekomendasi:** {f['action']}")
-                            st.caption(f"Ref: {f['std']}")
+                        # Tampilan Card Diagnosa
+                        with st.expander(f"⚠️ {f['name']} (Lihat Detail)", expanded=True):
+                            # BARIS 1: PEMICU (Trigger) - Fitur Baru
+                            st.info(f"**🔍 Indikasi Pemicu:** {f.get('trigger', '-')}")
+                            
+                            # BARIS 2: PENJELASAN
+                            st.markdown(f"**Analisa:** {f['desc']}")
+                            
+                            # BARIS 3: REKOMENDASI & STANDAR
+                            st.markdown(f"**🛠️ Rekomendasi:** {f['action']}")
+                            st.caption(f"Ref Standar: {f['std']}")
                 else:
                     st.success("✅ **Kondisi Mekanikal NORMAL.** Tidak ditemukan indikasi misalignment atau bearing defect.")
 
