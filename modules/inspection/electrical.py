@@ -10,14 +10,12 @@ class ElectricalInspector:
     """
     
     def __init__(self):
-        # Limit Standar
-        self.limit_v_unbalance_warn = 1.0 # % (Derating starts here)
-        self.limit_v_unbalance_trip = 5.0 # % (Dangerous)
+        # Limit Standar IEC 60034-1 (Sesuai TKI)
+        self.limit_v_unbalance_warn = 2.0 # % (Zone A Limit - IEC)
+        self.limit_v_unbalance_trip = 5.0 # % (Zone B Limit - Danger)
         
-        self.limit_i_unbalance_warn = 10.0 # % (General limit for motor health)
-        
-        # Tolerance Voltage Supply (IEC 60034 Zone A)
-        self.voltage_tolerance = 0.05 # +/- 5%
+        self.limit_i_unbalance_warn = 10.0 
+        self.voltage_tolerance = 0.05 # +/- 5% (Zone A Voltage Variation)
 
     def _calc_unbalance(self, values):
         """
