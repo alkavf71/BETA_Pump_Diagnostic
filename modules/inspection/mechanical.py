@@ -1,6 +1,9 @@
 import pandas as pd
 
 class MechanicalInspector:
+    """
+    MODULE INSPEKSI MEKANIKAL (Logic Layer) - REVISI MULTI-FAULT
+    """
     
     def __init__(self, vib_limit_warn=4.5, temp_limit_warn=85.0):
         self.vib_limit_warn = vib_limit_warn
@@ -8,18 +11,18 @@ class MechanicalInspector:
         self.temp_limit_warn = temp_limit_warn
         self.vib_limit_zone_a = 2.30 
 
-        # DATABASE KNOWLEDGE BASE (Tetap Sama)
+        # DATABASE DIAGNOSA (Knowledge Base)
         self.knowledge_base = {
             "MISALIGNMENT": {
                 "name": "MISALIGNMENT",
                 "desc": "Indikasi ketidaklurusan poros (Angular/Offset).",
-                "action": "🔧 Lakukan Laser Alignment (Tol. <0.05mm). Cek kondisi Coupling.",
+                "action": "🔧 Lakukan Laser Alignment. Cek Shimming & Coupling.",
                 "std": "API 686 Ch. 4"
             },
             "UNBALANCE": {
                 "name": "UNBALANCE",
                 "desc": "Distribusi massa rotor/impeller tidak seimbang.",
-                "action": "⚖️ Lakukan Balancing (Grade G2.5). Cek kotoran di fan/impeller.",
+                "action": "⚖️ Lakukan Balancing (Grade G2.5). Cek kotoran menumpuk.",
                 "std": "ISO 21940-11"
             },
             "LOOSENESS": {
@@ -51,6 +54,12 @@ class MechanicalInspector:
                 "desc": "Suhu Operasi Tinggi.",
                 "action": "🌡️ Cek Cooling Fan & Sirip Motor.",
                 "std": "NEMA MG-1"
+            },
+            "GENERAL_HIGH": {
+                "name": "GENERAL HIGH VIBRATION",
+                "desc": "Vibrasi tinggi terdeteksi namun pola tidak spesifik.",
+                "action": "🔍 Lakukan pengecekan menyeluruh (Spektrum Analisis disarankan).",
+                "std": "ISO 10816-3"
             }
         }
 
@@ -83,61 +92,80 @@ class MechanicalInspector:
         ]
         df = pd.DataFrame(data, columns=["Unit", "Axis", "DE", "NDE", "Avr", "Limit", "Remark"])
 
-        # 3. RULE-BASED DIAGNOSTIC ENGINE (UPDATED WITH TRIGGER REMARK)
+        # 3. RULE-BASED DIAGNOSTIC ENGINE (INDEPENDENT CHECKS)
         detected_faults = []
-        max_m = max(m_h, m_v, m_a)
-        max_p = max(p_h, p_v, p_a)
-        global_max = max(max_m, max_p)
-
-        if global_max >= self.vib_limit_warn:
-            
-            # --- MISALIGNMENT (Axial Dominan) ---
-            if (m_a > 0.5 * max(m_h, m_v)) and (m_a > self.vib_limit_warn):
+        
+        # --- CEK DRIVER (MOTOR) SECARA MANDIRI ---
+        
+        # A. Misalignment Driver (Axial Dominan)
+        if m_a > self.vib_limit_warn:
+            if m_a > 0.5 * max(m_h, m_v):
                 fault = self.knowledge_base["MISALIGNMENT"].copy()
-                fault['trigger'] = f"Vibrasi Axial Driver ({m_a:.2f} mm/s) sangat dominan."
+                fault['trigger'] = f"[DRIVER] Vibrasi Axial ({m_a:.2f}) dominan thd Radial."
                 detected_faults.append(fault)
-                
-            elif (p_a > 0.5 * max(p_h, p_v)) and (p_a > self.vib_limit_warn):
+
+        # B. Unbalance Driver (Horizontal Dominan)
+        if m_h > self.vib_limit_warn:
+            if (m_h > m_v) and (m_h > m_a):
+                fault = self.knowledge_base["UNBALANCE"].copy()
+                fault['trigger'] = f"[DRIVER] Vibrasi Horizontal ({m_h:.2f}) tertinggi (Pola Radial)."
+                detected_faults.append(fault)
+
+        # C. Looseness Driver (Vertical Tinggi)
+        if m_v > self.vib_limit_warn:
+            if m_v > 0.8 * m_h: # Vertikal mendekati atau melebihi Horizontal
+                fault = self.knowledge_base["LOOSENESS"].copy()
+                fault['trigger'] = f"[DRIVER] Vibrasi Vertikal ({m_v:.2f}) tinggi (Indikasi Soft Foot/Longgar)."
+                detected_faults.append(fault)
+
+        # --- CEK DRIVEN (POMPA) SECARA MANDIRI ---
+
+        # D. Misalignment Driven
+        if p_a > self.vib_limit_warn:
+            if p_a > 0.5 * max(p_h, p_v):
                 fault = self.knowledge_base["MISALIGNMENT"].copy()
-                fault['trigger'] = f"Vibrasi Axial Driven ({p_a:.2f} mm/s) sangat dominan."
+                fault['trigger'] = f"[DRIVEN] Vibrasi Axial ({p_a:.2f}) dominan thd Radial."
                 detected_faults.append(fault)
 
-            # --- UNBALANCE (Radial Horizontal Dominan) ---
-            if (m_h > self.vib_limit_warn) and (m_h > m_v) and (m_h > m_a):
+        # E. Unbalance Driven
+        if p_h > self.vib_limit_warn:
+            if (p_h > p_v) and (p_h > p_a):
                 fault = self.knowledge_base["UNBALANCE"].copy()
-                fault['trigger'] = f"Vibrasi Horizontal Driver ({m_h:.2f} mm/s) tertinggi (Pola Radial)."
-                detected_faults.append(fault)
-            
-            elif (p_h > self.vib_limit_warn) and (p_h > p_v) and (p_h > p_a):
-                fault = self.knowledge_base["UNBALANCE"].copy()
-                fault['trigger'] = f"Vibrasi Horizontal Driven ({p_h:.2f} mm/s) tertinggi (Pola Radial)."
+                fault['trigger'] = f"[DRIVEN] Vibrasi Horizontal ({p_h:.2f}) tertinggi."
                 detected_faults.append(fault)
 
-            # --- LOOSENESS (Vertical Dominan/Tinggi) ---
-            if (m_v > 0.8 * m_h) and (m_v > self.vib_limit_warn):
+        # F. Looseness Driven
+        if p_v > self.vib_limit_warn:
+            if p_v > 0.8 * p_h:
                 fault = self.knowledge_base["LOOSENESS"].copy()
-                fault['trigger'] = f"Vibrasi Vertikal Driver ({m_v:.2f} mm/s) tidak wajar (Mendekati Horizontal)."
+                fault['trigger'] = f"[DRIVEN] Vibrasi Vertikal ({p_v:.2f}) tinggi."
                 detected_faults.append(fault)
+
+        # --- CEK KOMBINASI (SYSTEM WIDE) ---
+
+        # G. Bent Shaft (Axial Kanan-Kiri Tinggi)
+        if (m_a > self.vib_limit_trip) and (p_a > self.vib_limit_trip):
+            fault = self.knowledge_base["BENT_SHAFT"].copy()
+            fault['trigger'] = "Vibrasi Axial Driver & Driven sama-sama KRITIS."
+            detected_faults.append(fault)
+
+        # H. Cavitation (Pompa Goyang Semua Arah)
+        if (p_h > self.vib_limit_warn) and (p_v > self.vib_limit_warn) and (p_a > self.vib_limit_warn):
+            # Cek duplikasi, jangan tambahkan jika sudah didiagnosa Unbalance/Misalignment di Pompa
+            # Tapi Kavitasi biasanya acak, jadi kita tambahkan saja sebagai kemungkinan.
+            fault = self.knowledge_base["CAVITATION"].copy()
+            fault['trigger'] = "Vibrasi Pompa tinggi di SEMUA arah (Horizontal/Vertical/Axial)."
+            detected_faults.append(fault)
             
-            elif (p_v > 0.8 * p_h) and (p_v > self.vib_limit_warn):
-                fault = self.knowledge_base["LOOSENESS"].copy()
-                fault['trigger'] = f"Vibrasi Vertikal Driven ({p_v:.2f} mm/s) tidak wajar (Mendekati Horizontal)."
-                detected_faults.append(fault)
+        # I. General High Vibration (Fallback)
+        # Jika ada vibrasi tinggi TAPI tidak masuk kategori di atas
+        max_all = max(m_h, m_v, m_a, p_h, p_v, p_a)
+        if max_all > self.vib_limit_warn and len(detected_faults) == 0:
+            fault = self.knowledge_base["GENERAL_HIGH"].copy()
+            fault['trigger'] = f"Vibrasi Max ({max_all:.2f}) melebihi limit, pola tidak spesifik."
+            detected_faults.append(fault)
 
-            # --- BENT SHAFT (Axial Keduanya Tinggi) ---
-            if (m_a > self.vib_limit_warn) and (p_a > self.vib_limit_warn):
-                fault = self.knowledge_base["BENT_SHAFT"].copy()
-                fault['trigger'] = f"Axial Driver ({m_a:.2f}) & Driven ({p_a:.2f}) sama-sama tinggi."
-                detected_faults.append(fault)
-
-            # --- CAVITATION (Driven Tinggi Semua Arah) ---
-            if (p_h > self.vib_limit_warn) and (p_v > self.vib_limit_warn) and (p_a > self.vib_limit_warn):
-                 if max_m < self.vib_limit_warn: # Driver Halus
-                    fault = self.knowledge_base["CAVITATION"].copy()
-                    fault['trigger'] = f"Vibrasi Pompa tinggi segala arah (Max: {max_p:.2f} mm/s), tapi Motor halus."
-                    detected_faults.append(fault)
-
-        return df, detected_faults, global_max
+        return df, detected_faults, max_all
 
     def analyze_full_health(self, vib_inputs, temp_inputs, noise_obs=None):
         # 1. Analisa Vibrasi
@@ -147,26 +175,21 @@ class MechanicalInspector:
         temp_max = max(temp_inputs.values())
         if temp_max > self.temp_limit_warn:
             fault = self.knowledge_base["OVERHEAT"].copy()
-            # Cari bearing mana yang paling panas
             hottest_point = max(temp_inputs, key=temp_inputs.get)
-            fault['trigger'] = f"Suhu {hottest_point} mencapai {temp_max}°C (Limit {self.temp_limit_warn}°C)."
-            
-            # Cek duplikasi
-            if not any(f['name'] == "OVERHEAT" for f in faults):
-                faults.append(fault)
+            fault['trigger'] = f"Suhu {hottest_point} mencapai {temp_max}°C."
+            faults.append(fault)
             
         # 3. Analisa Noise
         if noise_obs == "Kavitasi / Kerikil":
+             # Cek agar tidak duplikat dgn diagnosa vibrasi
              if not any(f['name'] == "CAVITATION / FLOW" for f in faults):
                  fault = self.knowledge_base["CAVITATION"].copy()
-                 fault['trigger'] = "Terdeteksi suara fisik 'Kerikil' (Kavitasi) saat inspeksi."
+                 fault['trigger'] = "Terdeteksi suara fisik 'Kerikil' (Kavitasi)."
                  faults.append(fault)
-                 
         elif noise_obs == "Bearing Defect / Gemuruh":
-             if not any(f['name'] == "BEARING DEFECT" for f in faults):
-                 fault = self.knowledge_base["BEARING_FAIL"].copy()
-                 fault['trigger'] = "Terdeteksi suara fisik 'Gemuruh/Decit' (Bearing) saat inspeksi."
-                 faults.append(fault)
+             fault = self.knowledge_base["BEARING_FAIL"].copy()
+             fault['trigger'] = "Terdeteksi suara fisik 'Gemuruh' (Bearing Defect)."
+             faults.append(fault)
 
         status = "NORMAL"
         if any("ZONE C" in x for x in df['Remark'].values): status = "WARNING"
