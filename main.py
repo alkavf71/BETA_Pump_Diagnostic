@@ -51,7 +51,7 @@ mode = st.sidebar.radio("Mode Aplikasi:", ["🛠️ INSPEKSI RUTIN", "🚀 COMMI
 # MODE 1: INSPEKSI RUTIN
 # ==============================================================================
 if mode == "🛠️ Under Construction Alkavf Corp":
-    st.title(f"🛠️ Engineered by TnX: {asset.tag}")
+    st.title(f"🛠️ Under Construction Alkavf Corp: {asset.tag}")
 
     # Init Inspectors dengan Parameter Aset
     mech_inspector = MechanicalInspector(vib_limit_warn=asset.vib_limit_warning)
