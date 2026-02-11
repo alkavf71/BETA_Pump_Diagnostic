@@ -1,206 +1,232 @@
-import pandas as pd
+import streamlit as st
+import numpy as np
 
-class MechanicalInspector:
+# --- 1. LOGIC & ALGORITHM FUNCTION (OTAKNYA) ---
+
+def get_iso10816_zone(power_kw, velocity_rms, foundation_type='Rigid'):
     """
-    MODULE INSPEKSI MEKANIKAL (Logic Layer) - REVISI MULTI-FAULT
+    Menentukan Zona ISO 10816-3 berdasarkan Power (kW) dan Velocity RMS.
+    Asumsi: Group 1 (Large) > 300kW, Group 2 (Medium) 15-300kW.
     """
+    # Batas limit berdasarkan ISO 10816-3 (Simplified for General Pump)
+    # Zone boundaries: A/B, B/C, C/D
     
-    def __init__(self, vib_limit_warn=4.5, temp_limit_warn=85.0):
-        self.vib_limit_warn = vib_limit_warn
-        self.vib_limit_trip = 7.10
-        self.temp_limit_warn = temp_limit_warn
-        self.vib_limit_zone_a = 2.30 
+    if power_kw > 15: # Medium to Large Machines
+        if foundation_type == 'Rigid':
+            limits = [2.3, 4.5, 7.1] # mm/s RMS
+        else: # Flexible
+            limits = [3.5, 7.1, 11.0]
+    else: # Small Machines (<15 kW) - Strictly Speaking ISO 10816 Class I
+        limits = [0.71, 1.8, 4.5]
 
-        # DATABASE DIAGNOSA (Knowledge Base)
-        self.knowledge_base = {
-            "MISALIGNMENT": {
-                "name": "MISALIGNMENT",
-                "desc": "Indikasi ketidaklurusan poros (Angular/Offset).",
-                "action": "🔧 Lakukan Laser Alignment. Cek Shimming & Coupling.",
-                "std": "API 686 Ch. 4"
-            },
-            "UNBALANCE": {
-                "name": "UNBALANCE",
-                "desc": "Distribusi massa rotor/impeller tidak seimbang.",
-                "action": "⚖️ Lakukan Balancing (Grade G2.5). Cek kotoran menumpuk.",
-                "std": "ISO 21940-11"
-            },
-            "LOOSENESS": {
-                "name": "LOOSENESS",
-                "desc": "Kekenduran struktural / Soft Foot.",
-                "action": "🔩 Cek Soft Foot. Kencangkan Baut Pondasi. Cek Grouting.",
-                "std": "API 686 Ch. 5"
-            },
-            "BENT_SHAFT": {
-                "name": "BENT SHAFT",
-                "desc": "Indikasi poros bengkok (Physical damage).",
-                "action": "📏 Ukur Run-out poros (Max 0.05mm).",
-                "std": "API 610"
-            },
-            "CAVITATION": {
-                "name": "CAVITATION / FLOW",
-                "desc": "Masalah Flow atau Kavitasi (Hisapan).",
-                "action": "🌊 Cek NPSH Available. Bersihkan Strainer. Cek Valve Suction.",
-                "std": "API 610"
-            },
-             "BEARING_FAIL": {
-                "name": "BEARING DEFECT",
-                "desc": "Kerusakan elemen rolling bearing.",
-                "action": "🔄 Ganti Bearing segera.",
-                "std": "ISO 13373"
-            },
-             "OVERHEAT": {
-                "name": "OVERHEAT",
-                "desc": "Suhu Operasi Tinggi.",
-                "action": "🌡️ Cek Cooling Fan & Sirip Motor.",
-                "std": "NEMA MG-1"
-            },
-            "GENERAL_HIGH": {
-                "name": "GENERAL HIGH VIBRATION",
-                "desc": "Vibrasi tinggi terdeteksi namun pola tidak spesifik.",
-                "action": "🔍 Lakukan pengecekan menyeluruh (Spektrum Analisis disarankan).",
-                "std": "ISO 10816-3"
+    if velocity_rms < limits[0]:
+        return "Zone A (Good)", "🟢"
+    elif velocity_rms < limits[1]:
+        return "Zone B (Satisfactory)", "🟢"
+    elif velocity_rms < limits[2]:
+        return "Zone C (Unsatisfactory/Alert)", "🟡"
+    else:
+        return "Zone D (Unacceptable/Danger)", "🔴"
+
+def analyze_spectrum(rpm, peaks):
+    """
+    Menganalisis 3 puncak frekuensi dominan untuk menentukan akar masalah.
+    peaks = list of dict [{'freq': 25, 'amp': 4.2}, ...]
+    """
+    run_speed_hz = rpm / 60
+    diagnosis = []
+    
+    # Toleransi pembacaan frekuensi (+- 10%)
+    tolerance = 0.1 
+    
+    max_amp_peak = max(peaks, key=lambda x: x['amp'])
+    
+    for peak in peaks:
+        f = peak['freq']
+        a = peak['amp']
+        
+        # Skip jika amplitudo terlalu kecil (noise)
+        if a < 1.0: 
+            continue
+            
+        order = f / run_speed_hz
+        
+        # Logika Diagnosa
+        if (1.0 - tolerance) <= order <= (1.0 + tolerance):
+            if a == max_amp_peak['amp']: # Jika ini puncak tertinggi
+                diagnosis.append(f"Dominan 1x RPM ({f} Hz). Indikasi kuat **UNBALANCE**.")
+            else:
+                diagnosis.append(f"Ada komponen 1x RPM ({f} Hz). Kemungkinan Unbalance atau Bent shaft.")
+                
+        elif (2.0 - tolerance) <= order <= (2.0 + tolerance):
+            diagnosis.append(f"Tinggi di 2x RPM ({f} Hz). Indikasi kuat **MISALIGNMENT**.")
+            
+        elif order > 3.5 and not order.is_integer():
+             diagnosis.append(f"Frekuensi tinggi non-sinkron ({f} Hz). Indikasi **BEARING** atau **GEAR MESH**.")
+             
+        elif order.is_integer() and order > 3:
+             diagnosis.append(f"Banyak harmonik ({order:.1f}x). Indikasi **MECHANICAL LOOSENESS**.")
+
+    if not diagnosis:
+        return "Spektrum normal atau amplitudo rendah."
+    
+    return " | ".join(diagnosis)
+
+# --- 2. MAIN UI FUNCTION ---
+
+def render_mechanical_page():
+    st.title("🔧 Mechanical Diagnostics (Pump & Motor)")
+    st.markdown("---")
+
+    # A. INPUT SPESIFIKASI (UNIVERSAL)
+    st.subheader("1. Equipment Specification")
+    col_spec1, col_spec2, col_spec3 = st.columns(3)
+    
+    with col_spec1:
+        eq_name = st.text_input("Tag Number / Equipment Name", "P-101A")
+    with col_spec2:
+        power_kw = st.number_input("Motor Power (kW)", min_value=0.1, value=30.0)
+    with col_spec3:
+        rpm_input = st.number_input("Running Speed (RPM)", min_value=0, value=1480)
+        foundation = st.selectbox("Foundation Type", ["Rigid (Semen/Angkur Kuat)", "Flexible (Isolator/Karet)"])
+
+    st.markdown("---")
+
+    # B. INPUT PENGUKURAN (LOOP UNTUK 4 TITIK UKUR)
+    st.subheader("2. Vibration & Condition Data")
+    
+    # Kita buat Tabs agar tampilan bersih
+    tab1, tab2, tab3, tab4 = st.tabs(["Motor DE", "Motor NDE", "Pump DE", "Pump NDE"])
+    
+    measure_points = {
+        "Motor DE": tab1, "Motor NDE": tab2, 
+        "Pump DE": tab3, "Pump NDE": tab4
+    }
+    
+    # Dictionary untuk menyimpan data input
+    data_input = {}
+
+    for point_name, tab in measure_points.items():
+        with tab:
+            st.info(f"Input Data untuk **{point_name}**")
+            
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                vel_val = st.number_input(f"Velocity RMS (mm/s) - {point_name}", 0.0, 100.0, 0.0, key=f"v_{point_name}")
+            with c2:
+                acc_val = st.number_input(f"Acceleration RMS (g) - {point_name}", 0.0, 100.0, 0.0, key=f"a_{point_name}")
+            with c3:
+                disp_val = st.number_input(f"Displacement (μm) - {point_name}", 0.0, 1000.0, 0.0, key=f"d_{point_name}")
+
+            st.markdown("**ADASH FASIT Check (Visual)**")
+            f_col1, f_col2, f_col3, f_col4 = st.columns(4)
+            fasit_unbal = f_col1.selectbox(f"Unbalance", ["🟢 Aman", "🟡 Warning", "🔴 Bahaya"], key=f"fu_{point_name}")
+            fasit_misal = f_col2.selectbox(f"Misalignment", ["🟢 Aman", "🟡 Warning", "🔴 Bahaya"], key=f"fm_{point_name}")
+            fasit_loose = f_col3.selectbox(f"Looseness", ["🟢 Aman", "🟡 Warning", "🔴 Bahaya"], key=f"fl_{point_name}")
+            fasit_bear  = f_col4.selectbox(f"Bearing", ["🟢 Aman", "🟡 Warning", "🔴 Bahaya"], key=f"fb_{point_name}")
+
+            # Advanced Spectrum (Peak Picking)
+            with st.expander("🔎 Advanced Spectrum Input (Peak Picking)"):
+                p_peaks = []
+                for i in range(1, 4):
+                    pc1, pc2 = st.columns(2)
+                    pf = pc1.number_input(f"Freq Puncak {i} (Hz)", 0.0, 5000.0, 0.0, key=f"pf_{i}_{point_name}")
+                    pa = pc2.number_input(f"Amp Puncak {i} (mm/s)", 0.0, 100.0, 0.0, key=f"pa_{i}_{point_name}")
+                    p_peaks.append({'freq': pf, 'amp': pa})
+
+            # Simpan data ke dictionary
+            data_input[point_name] = {
+                'vel': vel_val, 'acc': acc_val, 'disp': disp_val,
+                'fasit': {'Unbalance': fasit_unbal, 'Misalign': fasit_misal, 'Looseness': fasit_loose, 'Bearing': fasit_bear},
+                'peaks': p_peaks
             }
-        }
 
-    def _determine_zone(self, value):
-        if value < self.vib_limit_zone_a: return "ZONE A (New)"
-        elif value < self.vib_limit_warn: return "ZONE B (Good)"
-        elif value < self.vib_limit_trip: return "ZONE C (Warning)"
-        else: return "ZONE D (Damage)"
-
-    def _avg(self, v1, v2): return (v1 + v2) / 2
-
-    def analyze_vibration(self, inputs):
-        # 1. Hitung Rata-rata
-        m_h = self._avg(inputs['m_de_h'], inputs['m_nde_h'])
-        m_v = self._avg(inputs['m_de_v'], inputs['m_nde_v'])
-        m_a = self._avg(inputs['m_de_a'], inputs['m_nde_a'])
+    st.markdown("---")
+    
+    # C. INPUT PRESSURE (HYDRAULIC)
+    st.subheader("3. Hydraulic Performance (Pressure)")
+    hc1, hc2 = st.columns(2)
+    suc_press = hc1.number_input("Suction Pressure (BarG)", value=0.5)
+    dis_press = hc2.number_input("Discharge Pressure (BarG)", value=4.0)
+    
+    # --- 4. BUTTON ANALYZE ---
+    if st.button("🚀 ANALYZE CONDITION", type="primary"):
+        st.write("## 📊 HASIL ANALISA & REKOMENDASI")
         
-        p_h = self._avg(inputs['p_de_h'], inputs['p_nde_h'])
-        p_v = self._avg(inputs['p_de_v'], inputs['p_nde_v'])
-        p_a = self._avg(inputs['p_de_a'], inputs['p_nde_a'])
-
-        # 2. DataFrame Report
-        data = [
-            ["Driver", "H", inputs['m_de_h'], inputs['m_nde_h'], m_h, self.vib_limit_warn, self._determine_zone(m_h)],
-            ["Driver", "V", inputs['m_de_v'], inputs['m_nde_v'], m_v, self.vib_limit_warn, self._determine_zone(m_v)],
-            ["Driver", "A", inputs['m_de_a'], inputs['m_nde_a'], m_a, self.vib_limit_warn, self._determine_zone(m_a)],
-            ["Driven", "H", inputs['p_de_h'], inputs['p_nde_h'], p_h, self.vib_limit_warn, self._determine_zone(p_h)],
-            ["Driven", "V", inputs['p_de_v'], inputs['p_nde_v'], p_v, self.vib_limit_warn, self._determine_zone(p_v)],
-            ["Driven", "A", inputs['p_de_a'], inputs['p_nde_a'], p_a, self.vib_limit_warn, self._determine_zone(p_a)],
-        ]
-        df = pd.DataFrame(data, columns=["Unit", "Axis", "DE", "NDE", "Avr", "Limit", "Remark"])
-
-        # 3. RULE-BASED DIAGNOSTIC ENGINE (INDEPENDENT CHECKS)
-        detected_faults = []
+        # 1. Analisa Pressure
+        diff_press = dis_press - suc_press
+        st.write(f"**Hydraulic Head (Est):** Differential Pressure = {diff_press:.2f} Bar")
         
-        # --- CEK DRIVER (MOTOR) SECARA MANDIRI ---
-        
-        # A. Misalignment Driver (Axial Dominan)
-        if m_a > self.vib_limit_warn:
-            if m_a > 0.5 * max(m_h, m_v):
-                fault = self.knowledge_base["MISALIGNMENT"].copy()
-                fault['trigger'] = f"[DRIVER] Vibrasi Axial ({m_a:.2f}) dominan thd Radial."
-                detected_faults.append(fault)
+        if suc_press < 0:
+            st.warning("⚠️ **Low Suction Pressure (Vacuum):** Risiko KAVITASI tinggi. Pastikan NPSHa cukup.")
+        elif diff_press < 1.0: # Ambang batas contoh
+            st.error("⚠️ **Low Performance:** Pompa tidak menghasilkan head yang cukup. Cek impeller/wear ring.")
+        else:
+            st.success("✅ **Hydraulic:** Tekanan operasi tampak normal (perlu verifikasi dengan kurva pompa).")
 
-        # B. Unbalance Driver (Horizontal Dominan)
-        if m_h > self.vib_limit_warn:
-            if (m_h > m_v) and (m_h > m_a):
-                fault = self.knowledge_base["UNBALANCE"].copy()
-                fault['trigger'] = f"[DRIVER] Vibrasi Horizontal ({m_h:.2f}) tertinggi (Pola Radial)."
-                detected_faults.append(fault)
+        st.markdown("---")
 
-        # C. Looseness Driver (Vertical Tinggi)
-        if m_v > self.vib_limit_warn:
-            if m_v > 0.8 * m_h: # Vertikal mendekati atau melebihi Horizontal
-                fault = self.knowledge_base["LOOSENESS"].copy()
-                fault['trigger'] = f"[DRIVER] Vibrasi Vertikal ({m_v:.2f}) tinggi (Indikasi Soft Foot/Longgar)."
-                detected_faults.append(fault)
+        # 2. Analisa Vibrasi per Titik
+        for point, data in data_input.items():
+            # Skip jika data 0 (tidak diinput)
+            if data['vel'] == 0 and data['acc'] == 0:
+                continue
 
-        # --- CEK DRIVEN (POMPA) SECARA MANDIRI ---
+            with st.container():
+                st.subheader(f"📍 Point: {point}")
+                
+                # A. ISO 10816 Status
+                zone, icon = get_iso10816_zone(power_kw, data['vel'], foundation)
+                st.markdown(f"**Status ISO 10816-3:** {icon} **{zone}** (Vel: {data['vel']} mm/s)")
+                
+                # B. Analisa Spektrum & FASIT Combined
+                st.markdown("**Diagnosa Kerusakan:**")
+                
+                diagnosis_list = []
+                
+                # Cek FASIT dulu
+                for k, v in data['fasit'].items():
+                    if "🔴" in v:
+                        diagnosis_list.append(f"🔴 **ADASH FASIT mendeteksi {k} Parah**.")
+                    elif "🟡" in v:
+                        diagnosis_list.append(f"🟡 **ADASH FASIT mendeteksi {k} Warning**.")
+                
+                # Cek Spektrum Manual
+                spec_analysis = analyze_spectrum(rpm_input, data['peaks'])
+                if "normal" not in spec_analysis:
+                     diagnosis_list.append(f"📈 **Analisa Spektrum:** {spec_analysis}")
 
-        # D. Misalignment Driven
-        if p_a > self.vib_limit_warn:
-            if p_a > 0.5 * max(p_h, p_v):
-                fault = self.knowledge_base["MISALIGNMENT"].copy()
-                fault['trigger'] = f"[DRIVEN] Vibrasi Axial ({p_a:.2f}) dominan thd Radial."
-                detected_faults.append(fault)
+                # Cek Bearing via G-Value (Rule of Thumb General)
+                if data['acc'] > 1.5: # Misal ambang batas 1.5g
+                    diagnosis_list.append(f"⚠️ **High Acceleration ({data['acc']} g):** Indikasi kerusakan Bearing atau kurang lubrikasi.")
 
-        # E. Unbalance Driven
-        if p_h > self.vib_limit_warn:
-            if (p_h > p_v) and (p_h > p_a):
-                fault = self.knowledge_base["UNBALANCE"].copy()
-                fault['trigger'] = f"[DRIVEN] Vibrasi Horizontal ({p_h:.2f}) tertinggi."
-                detected_faults.append(fault)
+                # TAMPILKAN DIAGNOSA
+                if not diagnosis_list:
+                    if "A" in zone or "B" in zone:
+                        st.success("Mesin beroperasi dalam batas normal. Pertahankan kondisi.")
+                    else:
+                        st.info("Vibrasi agak tinggi namun pola spektrum/FASIT belum menunjukkan kerusakan spesifik. Cek kekencangan baut (Looseness) umum.")
+                else:
+                    for d in diagnosis_list:
+                        st.write(f"- {d}")
+                        
+                    # REKOMENDASI OTOMATIS BERDASARKAN KEYWORD
+                    st.markdown("**🔧 Rekomendasi Tindakan:**")
+                    full_text = " ".join(diagnosis_list).lower()
+                    
+                    if "unbalance" in full_text:
+                        st.write("1. Lakukan pembersihan (cleaning) pada impeller/fan.")
+                        st.write("2. Jika berlanjut, jadwalkan in-situ balancing.")
+                    if "misalignment" in full_text:
+                        st.write("1. Cek kondisi kopling (coupling wear).")
+                        st.write("2. Lakukan laser alignment ulang saat mesin dingin.")
+                    if "bearing" in full_text or "lubrikasi" in full_text:
+                        st.write("1. Lakukan Greasing (regreasing) segera.")
+                        st.write("2. Monitor suara bearing. Jika bising, rencanakan penggantian bearing.")
+                    if "looseness" in full_text:
+                        st.write("1. Kencangkan baut pondasi dan baut mounting motor/pompa.")
+                    if "kavitasi" in full_text:
+                        st.write("1. Cek strainer suction (mungkin buntu).")
+                        st.write("2. Cek level tangki supply.")
 
-        # F. Looseness Driven
-        if p_v > self.vib_limit_warn:
-            if p_v > 0.8 * p_h:
-                fault = self.knowledge_base["LOOSENESS"].copy()
-                fault['trigger'] = f"[DRIVEN] Vibrasi Vertikal ({p_v:.2f}) tinggi."
-                detected_faults.append(fault)
-
-        # --- CEK KOMBINASI (SYSTEM WIDE) ---
-
-        # G. Bent Shaft (Axial Kanan-Kiri Tinggi)
-        if (m_a > self.vib_limit_trip) and (p_a > self.vib_limit_trip):
-            fault = self.knowledge_base["BENT_SHAFT"].copy()
-            fault['trigger'] = "Vibrasi Axial Driver & Driven sama-sama KRITIS."
-            detected_faults.append(fault)
-
-        # H. Cavitation (Pompa Goyang Semua Arah)
-        if (p_h > self.vib_limit_warn) and (p_v > self.vib_limit_warn) and (p_a > self.vib_limit_warn):
-            # Cek duplikasi, jangan tambahkan jika sudah didiagnosa Unbalance/Misalignment di Pompa
-            # Tapi Kavitasi biasanya acak, jadi kita tambahkan saja sebagai kemungkinan.
-            fault = self.knowledge_base["CAVITATION"].copy()
-            fault['trigger'] = "Vibrasi Pompa tinggi di SEMUA arah (Horizontal/Vertical/Axial)."
-            detected_faults.append(fault)
-            
-        # I. General High Vibration (Fallback)
-        # Jika ada vibrasi tinggi TAPI tidak masuk kategori di atas
-        max_all = max(m_h, m_v, m_a, p_h, p_v, p_a)
-        if max_all > self.vib_limit_warn and len(detected_faults) == 0:
-            fault = self.knowledge_base["GENERAL_HIGH"].copy()
-            fault['trigger'] = f"Vibrasi Max ({max_all:.2f}) melebihi limit, pola tidak spesifik."
-            detected_faults.append(fault)
-
-        return df, detected_faults, max_all
-
-    def analyze_full_health(self, vib_inputs, temp_inputs, noise_obs=None):
-        # 1. Analisa Vibrasi
-        df, faults, max_vib = self.analyze_vibration(vib_inputs)
-        
-        # 2. Analisa Suhu
-        temp_max = max(temp_inputs.values())
-        if temp_max > self.temp_limit_warn:
-            fault = self.knowledge_base["OVERHEAT"].copy()
-            hottest_point = max(temp_inputs, key=temp_inputs.get)
-            fault['trigger'] = f"Suhu {hottest_point} mencapai {temp_max}°C."
-            faults.append(fault)
-            
-        # 3. Analisa Noise
-        if noise_obs == "Kavitasi / Kerikil":
-             # Cek agar tidak duplikat dgn diagnosa vibrasi
-             if not any(f['name'] == "CAVITATION / FLOW" for f in faults):
-                 fault = self.knowledge_base["CAVITATION"].copy()
-                 fault['trigger'] = "Terdeteksi suara fisik 'Kerikil' (Kavitasi)."
-                 faults.append(fault)
-        elif noise_obs == "Bearing Defect / Gemuruh":
-             fault = self.knowledge_base["BEARING_FAIL"].copy()
-             fault['trigger'] = "Terdeteksi suara fisik 'Gemuruh' (Bearing Defect)."
-             faults.append(fault)
-
-        status = "NORMAL"
-        if any("ZONE C" in x for x in df['Remark'].values): status = "WARNING"
-        if temp_max > self.temp_limit_warn: status = "WARNING"
-        if any("ZONE D" in x for x in df['Remark'].values): status = "CRITICAL"
-        if temp_max > 95.0: status = "CRITICAL"
-
-        return {
-            "dataframe": df,
-            "faults": faults,
-            "max_vib": max_vib,
-            "max_temp": temp_max,
-            "status": status
-        }
+                st.divider()
