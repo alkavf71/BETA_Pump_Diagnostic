@@ -7,42 +7,29 @@ class ElectricalInspector:
     
     Standards Reference:
     1. IEC 60034-1: Rotating Electrical Machines - Rating and Performance.
-       - Batas toleransi tegangan supply: +/- 5% (Zone A).
-       - Batas overload arus (Service Factor).
     2. NEMA MG-1: Motors and Generators.
-       - Definisi Voltage Unbalance & Derating Factor.
-       - Rule of thumb: 1% V-Unbalance = 6-10% I-Unbalance.
-    3. IEEE / Fluke Guidelines:
-       - Batas aman Voltage Unbalance (2%).
-       - Batas aman Current Unbalance (10%).
     """
     
     def __init__(self):
         # --- THRESHOLDS (BATAS AMAN) ---
         
         # 1. Voltage Unbalance (IEC 60034-1)
-        # Zone A (Aman): 0 - 2%
-        # Zone B (Warning/Derating): > 2%
-        # Critical: > 5% (Resiko lilitan terbakar tinggi)
         self.limit_v_unbal_warn = 2.0 
         self.limit_v_unbal_trip = 5.0
         
         # 2. Current Unbalance (NEMA/IEEE)
-        # 10% adalah indikator umum kesehatan motor/koneksi
+        # PERBAIKAN DISINI: Konsisten menggunakan nama 'unbal'
         self.limit_i_unbal_warn = 10.0
         
         # 3. Voltage Deviation (IEC 60034-1 Zone A)
-        # Toleransi tegangan masuk +/- 5% dari Nameplate
         self.volt_tolerance = 0.05 
 
         # 4. Ground Fault (Safety)
-        # > 0.5 Ampere bocor ke tanah dianggap bahaya
         self.limit_ground_fault = 0.5
 
     def _calc_nema_unbalance(self, values):
         """
         Menghitung % Unbalance menggunakan metode NEMA MG-1.
-        Rumus: (Max Deviation from Average / Average) * 100
         """
         avg = np.mean(values)
         if avg == 0: return 0.0, 0.0
@@ -54,18 +41,6 @@ class ElectricalInspector:
     def analyze_health(self, vol_inputs, amp_inputs, rated_vol, rated_fla):
         """
         Fungsi Utama Diagnosa Kesehatan Elektrikal.
-        
-        Args:
-            vol_inputs (list): [V_rs, V_st, V_tr]
-            amp_inputs (list): [I_r, I_s, I_t]
-            rated_vol (float): Tegangan Nameplate (misal 380V)
-            rated_fla (float): Full Load Ampere Nameplate
-            
-        Returns:
-            df_report (DataFrame): Tabel data olahan untuk UI
-            faults (list): Daftar diagnosa kerusakan
-            status (str): Status Global (NORMAL/WARNING/CRITICAL)
-            load_pct (float): Persentase pembebanan motor
         """
         
         faults = []
@@ -85,7 +60,6 @@ class ElectricalInspector:
         # --- 2. LOGIC DIAGNOSA (RULE BASED) ---
 
         # A. VOLTAGE UNBALANCE (IEC 60034 / NEMA)
-        # Ketimpangan tegangan adalah pembunuh utama motor (Overheat).
         if v_unbal > self.limit_v_unbal_trip:
             faults.append({
                 "name": "CRITICAL VOLTAGE UNBALANCE",
@@ -104,8 +78,8 @@ class ElectricalInspector:
             if status != "CRITICAL": status = "WARNING"
 
         # B. CURRENT UNBALANCE (Kesehatan Lilitan/Koneksi)
-        # Jika tegangan seimbang tapi arus timpang -> Masalah di Motor/Kabel.
-        if i_unbal > self.limit_i_unbalance_warn:
+        # PERBAIKAN DISINI: Variabel sudah disamakan menjadi 'limit_i_unbal_warn'
+        if i_unbal > self.limit_i_unbal_warn:
             # Pastikan motor tidak dalam kondisi mati/load sangat rendah (false alarm)
             if i_avg > 1.0: 
                 faults.append({
@@ -117,8 +91,6 @@ class ElectricalInspector:
                 if status != "CRITICAL": status = "WARNING"
 
         # C. OVERLOAD (IEC 60034 Rating)
-        # Cek apakah arus melebihi rating nameplate
-        # Toleransi 5% untuk fluktuasi sesaat
         if max_amp > (rated_fla * 1.05):
             faults.append({
                 "name": "OVERLOAD (OVERCURRENT)",
@@ -129,7 +101,6 @@ class ElectricalInspector:
             status = "CRITICAL"
 
         # D. VOLTAGE DEVIATION (Under/Over Voltage)
-        # IEC 60034 Zone A: Tegangan harus dalam range +/- 5%
         v_min = rated_vol * (1 - self.volt_tolerance)
         v_max = rated_vol * (1 + self.volt_tolerance)
         
@@ -151,7 +122,6 @@ class ElectricalInspector:
             if status != "CRITICAL": status = "WARNING"
 
         # E. SINGLE PHASING (Kehilangan 1 Fasa)
-        # Deteksi ekstrim: Salah satu arus 0 atau sangat kecil dibanding yang lain
         if (min(amp_inputs) < 0.5) and (max(amp_inputs) > 5.0):
              faults.append({
                 "name": "SINGLE PHASING",
