@@ -67,7 +67,7 @@ if mode == "🛠️ INSPEKSI RUTIN":
         st.info(f"Limit vibrasi otomatis: **{asset.vib_limit_warning} mm/s** (ISO 20816 Group Based on {asset.power_kw} kW).")
         
         # --- FITUR GAMBAR PANDUAN (UPDATED .png) ---
-        with st.expander("ℹ️ Lihat Peta Titik Pengukuran Vibrasi (Klik Disini)", expanded=False):
+        with st.expander("ℹ️ Lihat Peta Titik Pengukuran Vibrasi (Klik Disini)", expanded=True):
             c_img1, c_img2 = st.columns([1, 2])
             with c_img2:
                 # PERBAIKAN: Menggunakan .png sesuai file asli Bapak
