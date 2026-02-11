@@ -233,7 +233,7 @@ if mode == "🛠️ INSPEKSI RUTIN":
                 fig.update_layout(height=200, margin=dict(t=10,b=10,l=10,r=10))
                 st.plotly_chart(fig, use_container_width=True)
 
-    # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
     # TAB 2: ELEKTRIKAL (Modern UI)
     # --------------------------------------------------------------------------
     with tab2:
@@ -248,67 +248,88 @@ if mode == "🛠️ INSPEKSI RUTIN":
         with st.expander("📝 Input Data Pengukuran (Klik untuk Buka/Tutup)", expanded=True):
             with st.form("elec_form"):
                 ce1, ce2 = st.columns(2)
+                
+                # KOLOM KIRI: Tegangan & Suhu
                 with ce1:
-                    st.markdown("**1. Tegangan (Volt Phase-to-Phase)**")
+                    st.markdown("**1. Tegangan & Suhu**")
                     c_v1, c_v2, c_v3 = st.columns(3)
-                    v_rs = c_v1.number_input("R-S", value=float(asset.volt_rated), step=1.0)
-                    v_st = c_v2.number_input("S-T", value=float(asset.volt_rated), step=1.0)
-                    v_tr = c_v3.number_input("T-R", value=float(asset.volt_rated), step=1.0)
+                    v_rs = c_v1.number_input("R-S (V)", value=float(asset.volt_rated), step=1.0)
+                    v_st = c_v2.number_input("S-T (V)", value=float(asset.volt_rated), step=1.0)
+                    v_tr = c_v3.number_input("T-R (V)", value=float(asset.volt_rated), step=1.0)
+                    
+                    # --- NEW INPUT: SUHU BODY STATOR ---
+                    st.caption("Thermal Check (IEC 60034 Insulation Class)")
+                    temp_body = st.number_input("Suhu Body Motor (°C):", value=55.0, step=1.0, help="Tembak di sirip pendingin tengah.")
+                
+                # KOLOM KANAN: Arus (Ampere)
                 with ce2:
                     st.markdown("**2. Arus Beban (Ampere)**")
                     c_i1, c_i2, c_i3 = st.columns(3)
-                    i_r = c_i1.number_input("R", value=float(asset.fla_rated)*0.8, step=0.1)
-                    i_s = c_i2.number_input("S", value=float(asset.fla_rated)*0.8, step=0.1)
-                    i_t = c_i3.number_input("T", value=float(asset.fla_rated)*0.8, step=0.1)
+                    i_r = c_i1.number_input("Ampere R", value=float(asset.fla_rated)*0.8, step=0.1)
+                    i_s = c_i2.number_input("Ampere S", value=float(asset.fla_rated)*0.8, step=0.1)
+                    i_t = c_i3.number_input("Ampere T", value=float(asset.fla_rated)*0.8, step=0.1)
                     
-                submit_elec = st.form_submit_button("⚡ ANALISA KUALITAS DAYA")
+                submit_elec = st.form_submit_button("⚡ ANALISA LISTRIK & TERMAL")
 
         # Dashboard Hasil
         if submit_elec:
             vol_inputs = [v_rs, v_st, v_tr]
             amp_inputs = [i_r, i_s, i_t]
             
+            # Panggil Analisa Eksisting
             df_elec, elec_faults, elec_status, load_pct = elec_inspector.analyze_health(
                 vol_inputs, amp_inputs, asset.volt_rated, asset.fla_rated
             )
+            
+            # --- TAMBAHAN LOGIC SUHU BODY ---
+            # Asumsi Motor Class F (Max 155C), Batas aman body ~90C
+            if temp_body > 90.0:
+                elec_faults.append({
+                    "name": "OVERHEATING (Thermal)",
+                    "val": f"{temp_body}°C",
+                    "desc": "Suhu body > 90°C. Risiko kerusakan isolasi (Insulation Breakdown).",
+                    "action": "❄️ Bersihkan sirip motor. Cek kipas pendingin. Cek overload."
+                })
+                if elec_status != "CRITICAL": elec_status = "WARNING"
+            # -------------------------------
             
             # Helper metrics
             v_avg = sum(vol_inputs)/3
             i_avg = sum(amp_inputs)/3
             v_unbal_val = float(df_elec.loc[df_elec['Parameter']=='Unbalance V', 'Value'].values[0].replace(' %',''))
-            i_unbal_val = float(df_elec.loc[df_elec['Parameter']=='Unbalance I', 'Value'].values[0].replace(' %',''))
 
             st.divider()
 
-            # 1. STATUS CARD
+            # 1. STATUS CARD (Updated)
             if elec_status == "NORMAL":
                 st.markdown("""<div style="padding:15px; border-radius:10px; background-color:#e8f5e9; border-left: 6px solid #2ecc71;">
-                    <h3 style="color:#1b5e20; margin:0;">✅ SYSTEM HEALTHY</h3><p style="margin:0;">Kualitas daya listrik aman (IEC 60034).</p></div>""", unsafe_allow_html=True)
+                    <h3 style="color:#1b5e20; margin:0;">✅ SYSTEM HEALTHY</h3><p style="margin:0;">Listrik Seimbang & Suhu Aman.</p></div>""", unsafe_allow_html=True)
             elif elec_status == "WARNING":
                 st.markdown("""<div style="padding:15px; border-radius:10px; background-color:#fff3cd; border-left: 6px solid #ffc107;">
-                    <h3 style="color:#856404; margin:0;">⚠️ WARNING ALERT</h3><p style="margin:0;">Penyimpangan parameter terdeteksi.</p></div>""", unsafe_allow_html=True)
+                    <h3 style="color:#856404; margin:0;">⚠️ WARNING ALERT</h3><p style="margin:0;">Penyimpangan Parameter / Panas Terdeteksi.</p></div>""", unsafe_allow_html=True)
             else:
                 st.markdown("""<div style="padding:15px; border-radius:10px; background-color:#f8d7da; border-left: 6px solid #dc3545;">
                     <h3 style="color:#721c24; margin:0;">🚨 CRITICAL FAULT</h3><p style="margin:0;">Bahaya! Parameter trip/safety terlampaui.</p></div>""", unsafe_allow_html=True)
 
             st.write("") 
 
-            # 2. KEY METRICS
+            # 2. KEY METRICS (Ditambah Suhu)
             km1, km2, km3, km4 = st.columns(4)
-            with km1: st.metric("Avg Voltage", f"{v_avg:.1f} V", f"{v_avg - asset.volt_rated:.1f} V")
-            with km2: 
-                d_color = "normal" if v_unbal_val < 1.0 else "inverse"
-                st.metric("Volt Unbalance", f"{v_unbal_val:.2f}%", "Max 1.0%", delta_color=d_color)
-            with km3: st.metric("Avg Current", f"{i_avg:.1f} A")
+            with km1: st.metric("Avg Voltage", f"{v_avg:.1f} V")
+            with km2: st.metric("Load Current", f"{load_pct:.1f}%")
+            with km3: 
+                 # Metric Suhu Body
+                 t_color = "normal" if temp_body < 70 else "inverse"
+                 st.metric("Body Temp", f"{temp_body}°C", "Max 90°C", delta_color=t_color)
             with km4:
-                l_color = "normal" if load_pct < 100 else "inverse"
-                st.metric("Motor Load", f"{load_pct:.1f}%", "Max 100%", delta_color=l_color)
+                d_color = "normal" if v_unbal_val < 2.0 else "inverse"
+                st.metric("V-Unbalance", f"{v_unbal_val:.2f}%", "Max 2.0%", delta_color=d_color)
 
             st.markdown("---")
 
             # 3. VISUAL BALANCE CHECK (CHARTS)
             col_chart1, col_chart2 = st.columns(2)
-
+            # ... (Grafik Chart sama seperti sebelumnya) ...
             with col_chart1:
                 st.subheader("📊 Voltage Balance")
                 fig_v = go.Figure()
