@@ -3,289 +3,262 @@ import pandas as pd
 import numpy as np
 
 # ==========================================
-# 1. BAGIAN LOGIKA & ALGORITMA (THE BRAIN)
+# BAGIAN A: THE BRAIN (LOGIKA DIAGNOSA)
 # ==========================================
-# Catatan: Semua fungsi di sini HANYA menerima satuan SI (kW, Meter, m3/hr)
 
 def get_iso_limit_suggestion(kw, is_flexible=False):
     """
-    Logika Penentuan Limit ISO 10816-3 (Group 1 & 2).
+    Logika Smart Limit ISO 10816-3.
     Group 2 (15-300 kW): Rigid=4.5, Flexible=7.1
     Group 1 (>300 kW)  : Rigid=7.1, Flexible=11.0
     """
-    if kw < 15:
-        return 4.50 # Default untuk mesin kecil (<15kW biasanya pakai rule of thumb)
-        
-    if 15 <= kw <= 300: # Group 2 (Medium)
-        return 7.10 if is_flexible else 4.50
-    else: # Group 1 (Large > 300kW)
-        return 11.0 if is_flexible else 7.10
+    if kw < 15: return 4.50
+    if 15 <= kw <= 300: return 7.10 if is_flexible else 4.50
+    else: return 11.0 if is_flexible else 7.10
 
 def get_iso_remark(value_avg, limit):
-    """Logika Penilaian Severity ISO 10816"""
-    if value_avg > limit: return "Vibration causes damage"
-    elif value_avg > (limit * 0.60): return "Short-term operation allowable"
-    elif value_avg > (limit * 0.30): return "Unlimited long-term operation allowable"
-    else: return "New machine condition"
+    """Jalur A: ISO Severity Logic"""
+    if value_avg > limit: return "🔴 DANGER"
+    elif value_avg > (limit * 0.60): return "🟡 WARNING"
+    elif value_avg > (limit * 0.30): return "🟢 SATISFACTORY"
+    else: return "🔵 GOOD"
 
 def analyze_hydraulic_performance(suc_bar, dis_bar, design_head_m, actual_flow_m3h, design_flow_m3h):
-    """
-    Diagnosa Hidrolik Lanjutan (Sesuai API 610 & HI 9.6.3).
-    Input: Pressure (Bar), Head (m), Flow (m3/h).
-    """
+    """Jalur C: Hydraulic Performance Logic"""
     messages = []
     
-    # 1. Cek Head Performance (Pressure Generation)
+    # 1. Head Analysis
     diff_bar = dis_bar - suc_bar
-    actual_head_m = (diff_bar * 10.2) / 0.85 # Asumsi SG 0.85 (BBM)
+    actual_head_m = (diff_bar * 10.2) / 0.85 # Asumsi SG 0.85
     
     if design_head_m > 0:
         head_ratio = (actual_head_m / design_head_m) * 100
-        if head_ratio < 70:
-            messages.append(f"🔴 LOW HEAD PERF: Hanya {head_ratio:.0f}% dari Desain (Indikasi: Impeller/Wear Ring Aus).")
-        elif head_ratio > 110:
-            messages.append(f"🟡 HIGH HEAD: {head_ratio:.0f}% (Indikasi: Operasi dekat Shut-off / Buntu).")
+        if head_ratio < 75: messages.append(f"🔴 LOW HEAD PERF ({head_ratio:.0f}%): Indikasi Internal Leak / Wear Ring Aus.")
+        elif head_ratio > 110: messages.append(f"🟡 HIGH HEAD ({head_ratio:.0f}%): Operasi dekat Shut-off.")
 
-    # 2. Cek Flow Performance (Operating Region - API 610)
-    # Preferred Operating Region (POR) biasanya 70% - 120% dari BEP (Design Flow)
+    # 2. Flow Analysis (Operating Region)
     if design_flow_m3h > 0 and actual_flow_m3h > 0:
         flow_ratio = (actual_flow_m3h / design_flow_m3h) * 100
-        
-        if flow_ratio < 60:
-             messages.append(f"🔴 LOW FLOW ({flow_ratio:.0f}% BEP): Risiko Recirculation & Vibrasi Tinggi.")
-        elif flow_ratio < 70:
-             messages.append(f"🟡 BELOW POR ({flow_ratio:.0f}% BEP): Kurang Efisien.")
-        elif flow_ratio > 120:
-             messages.append(f"🔴 HIGH FLOW ({flow_ratio:.0f}% BEP): Risiko Kavitasi & Motor Overload.")
-        else:
-             messages.append(f"🟢 GOOD FLOW ({flow_ratio:.0f}% BEP): Operasi di Titik Efisiensi Terbaik.")
+        if flow_ratio < 60: messages.append(f"🔴 LOW FLOW ({flow_ratio:.0f}% BEP): Risiko Recirculation & Panas.")
+        elif flow_ratio > 120: messages.append(f"🔴 HIGH FLOW ({flow_ratio:.0f}% BEP): Risiko Kavitasi & Motor Overload.")
     
-    elif actual_flow_m3h == 0:
-         messages.append("⚪ INFO: Data Flow Meter 0 / Tidak Diinput.")
-
-    return "\n".join(messages) if messages else "Normal Hydraulic Condition"
+    # 3. Suction Analysis
+    if suc_bar < 0: messages.append("🔴 NEGATIVE SUCTION: Risiko Kavitasi Tinggi (Vaporization).")
+        
+    return messages if messages else ["🟢 Hydraulic Normal"]
 
 def analyze_spectrum_logic(rpm, peaks):
-    """Diagnosa Spektrum (Unbalance, Misalign, Looseness)"""
-    if rpm == 0 or not peaks: return "Data Spektrum Tidak Tersedia"
+    """Jalur D: Root Cause Analysis (Spectrum)"""
+    if rpm == 0 or not peaks: return ["Data Spektrum Kosong"]
     run_speed_hz = rpm / 60
     diagnosis = []
-    tolerance = 0.15
     max_amp = max([p['amp'] for p in peaks])
     
     for peak in peaks:
         f, a = peak['freq'], peak['amp']
-        if a < 0.3 or (a < 0.1 * max_amp): continue # Filter noise
+        if a < 0.3 or (a < 0.1 * max_amp): continue
         order = f / run_speed_hz
         
-        if (1.0 - tolerance) <= order <= (1.0 + tolerance): diagnosis.append("UNBALANCE")
-        elif (2.0 - tolerance) <= order <= (2.0 + tolerance): diagnosis.append("MISALIGNMENT")
-        elif (3.0 - tolerance) <= order <= (3.0 + tolerance): diagnosis.append("LOOSENESS")
-        elif order > 3.5: diagnosis.append("BEARING DEFECT")
+        if 0.8 <= order <= 1.2: diagnosis.append("UNBALANCE (1x RPM)")
+        elif 1.8 <= order <= 2.2: diagnosis.append("MISALIGNMENT (2x RPM)")
+        elif 2.8 <= order <= 3.2: diagnosis.append("LOOSENESS (3x RPM)")
+        elif order > 3.5: diagnosis.append("BEARING DEFECT (High Freq)")
             
-    return ", ".join(set(diagnosis)) if diagnosis else "Normal"
+    return list(set(diagnosis)) if diagnosis else ["Spectrum Normal"]
 
 # ==========================================
-# 2. TAMPILAN ANTARMUKA (UI)
+# BAGIAN B: USER INTERFACE (UI)
 # ==========================================
 
 def render_mechanical_page():
-    st.header("🔍 Mechanical & Process Inspection")
+    st.header("🔍 Digital Reliability Assistant")
+    st.caption("Integrated Diagnostic System: ISO 10816 + API 610 + Thermal + Structural Analysis")
     st.markdown("---")
 
-    # ==========================================
-    # INPUT STEP 1: SPESIFIKASI (NORMALISASI DATA)
-    # ==========================================
-    st.subheader("📋 1. Equipment Specification (Data Plat Nama)")
-    
+    # --- 1. SPESIFIKASI & STANDARDISASI DATA ---
+    st.subheader("📋 1. Equipment Specification")
     col_spec_motor, col_spec_pump = st.columns(2)
 
     with col_spec_motor:
-        st.info("🔌 Spesifikasi Motor (Driver)")
-        
-        # Input Power & RPM
+        st.info("🔌 Driver (Motor) Spec")
         c1, c2 = st.columns([0.7, 0.3])
         p_val = c1.number_input("Rated Power", value=30.0)
-        p_unit = c2.selectbox("Satuan", ["kW", "HP"])
-        
-        if p_unit == "HP":
-            m_power_kw = p_val * 0.7457
-        else:
-            m_power_kw = p_val
+        p_unit = c2.selectbox("Unit Power", ["kW", "HP"])
+        m_power_kw = p_val * 0.7457 if p_unit == "HP" else p_val
             
         m_rpm = st.number_input("Rated Speed (RPM)", value=2950)
         
-        # --- FITUR SMART LIMIT ---
-        st.write("---")
-        st.caption("🏗️ Tipe Pondasi (Untuk Auto-Limit ISO)")
-        # Checkbox untuk Flexible Foundation
-        is_flex = st.checkbox("Flexible Foundation? (Skid/Rubber/Lantai Atas)")
-        
-        # Panggil fungsi Smart Limit
+        # Smart Limit Logic
+        is_flex = st.checkbox("Flexible Foundation? (Skid/Rubber)")
         auto_limit = get_iso_limit_suggestion(m_power_kw, is_flex)
-        
-        # Tampilkan Limit (User tetap bisa edit manual kalau mau kustom)
-        limit_rms = st.number_input("⚠️ ISO Vibration Limit (Trip)", value=auto_limit, step=0.1)
-        
-        if is_flex:
-            st.caption(f"ℹ️ Mode Flexible: Limit dilonggarkan ke {auto_limit} mm/s")
-        else:
-            st.caption(f"ℹ️ Mode Rigid (Default): Limit ketat di {auto_limit} mm/s")
+        limit_rms = st.number_input("⚠️ ISO Trip Limit (mm/s)", value=auto_limit)
+        st.caption(f"Suggestion: {auto_limit} mm/s based on ISO 10816-3 Group 2")
 
     with col_spec_pump:
-        st.success("💧 Spesifikasi Pompa (Driven)")
-        p_manuf = st.text_input("Manufaktur / Model", "KSB / Blackmer")
+        st.success("💧 Driven (Pump) Spec")
+        p_manuf = st.text_input("Manufaktur / Tag", "P-101A")
         
-        # --- INPUT HEAD DENGAN PILIHAN SATUAN ---
         c3, c4 = st.columns([0.7, 0.3])
-        h_val = c3.number_input("Design Head (BEP)", value=50.0)
-        h_unit = c4.selectbox("Satuan Head", ["Meter (m)", "Feet (ft)"])
-        
-        # [LOGIC KONVERSI] Head ke Meter
-        if h_unit == "Feet (ft)":
-            design_head_m = h_val * 0.3048
-            st.caption(f"ℹ️ Konversi: {h_val} ft = {design_head_m:.2f} m")
-        else:
-            design_head_m = h_val
+        h_val = c3.number_input("Design Head", value=50.0)
+        h_unit = c4.selectbox("Unit Head", ["Meter (m)", "Feet (ft)"])
+        design_head_m = h_val * 0.3048 if h_unit == "Feet (ft)" else h_val
 
-        # --- INPUT FLOW DESAIN DENGAN PILIHAN SATUAN ---
         c5, c6 = st.columns([0.7, 0.3])
         q_val = c5.number_input("Design Flow (BEP)", value=100.0)
-        q_unit = c6.selectbox("Satuan Flow", ["m3/hr", "GPM (US)"])
-        
-        # [LOGIC KONVERSI] Flow ke m3/hr
-        if q_unit == "GPM (US)":
-            design_flow_m3h = q_val * 0.2271
-            st.caption(f"ℹ️ Konversi: {q_val} GPM = {design_flow_m3h:.2f} m3/h")
-        else:
-            design_flow_m3h = q_val
+        q_unit = c6.selectbox("Unit Flow", ["m3/hr", "GPM"])
+        design_flow_m3h = q_val * 0.2271 if q_unit == "GPM" else q_val
 
     st.markdown("---")
 
-    # ==========================================
-    # INPUT STEP 2: VIBRATION DATA (FIELD)
-    # ==========================================
-    st.subheader("📝 2. Vibration Data Entry (ADASH/VibXpert)")
+    # --- 2. INPUT DATA LAPANGAN (VIBRATION, THERMAL, STRUCTURAL) ---
+    st.subheader("📝 2. Field Measurement Data")
     col_driver, col_driven = st.columns(2)
 
-    def input_row(label, key_prefix):
-        st.markdown(f"**{label}**")
-        c_de, c_nde = st.columns(2)
-        v_de = c_de.number_input(f"DE", key=f"{key_prefix}_de")
-        v_nde = c_nde.number_input(f"NDE", key=f"{key_prefix}_nde")
-        return v_de, v_nde
+    # Fungsi helper input biar rapi
+    def input_block(prefix):
+        c1, c2 = st.columns(2)
+        v_de = c1.number_input("Vel DE (mm/s)", key=f"{prefix}_v_de")
+        v_nde = c2.number_input("Vel NDE (mm/s)", key=f"{prefix}_v_nde")
+        
+        c3, c4 = st.columns(2)
+        a_de = c3.number_input("Accel DE (g)", key=f"{prefix}_a_de")
+        a_nde = c4.number_input("Accel NDE (g)", key=f"{prefix}_a_nde")
+        
+        c5, c6 = st.columns(2)
+        d_de = c5.number_input("Disp DE (μm)", key=f"{prefix}_d_de")
+        d_nde = c6.number_input("Disp NDE (μm)", key=f"{prefix}_d_nde")
+        
+        c7, c8 = st.columns(2)
+        t_de = c7.number_input("Temp DE (°C)", key=f"{prefix}_t_de", value=45.0)
+        t_nde = c8.number_input("Temp NDE (°C)", key=f"{prefix}_t_nde", value=42.0)
+        
+        return v_de, v_nde, a_de, a_nde, d_de, d_nde, t_de, t_nde
 
     with col_driver:
-        st.markdown("##### Driver (Motor)")
-        m_h_de, m_h_nde = input_row("1. Vel - Horizontal (mm/s)", "m_h")
-        m_v_de, m_v_nde = input_row("2. Vel - Vertical (mm/s)", "m_v")
-        m_a_de, m_a_nde = input_row("3. Vel - Axial (mm/s)", "m_a")
-        m_acc_de, m_acc_nde = input_row("4. Accel (g)", "m_acc")
-        m_disp_de, m_disp_nde = input_row("5. Disp (μm)", "m_disp")
+        st.markdown("##### ⚡ Driver Side")
+        m_v_de, m_v_nde, m_a_de, m_a_nde, m_d_de, m_d_nde, m_t_de, m_t_nde = input_block("m")
 
     with col_driven:
-        st.markdown("##### Driven (Pompa)")
-        p_h_de, p_h_nde = input_row("1. Vel - Horizontal (mm/s)", "p_h")
-        p_v_de, p_v_nde = input_row("2. Vel - Vertical (mm/s)", "p_v")
-        p_a_de, p_a_nde = input_row("3. Vel - Axial (mm/s)", "p_a")
-        p_acc_de, p_acc_nde = input_row("4. Accel (g)", "p_acc")
-        p_disp_de, p_disp_nde = input_row("5. Disp (μm)", "p_disp")
+        st.markdown("##### 💧 Driven Side")
+        p_v_de, p_v_nde, p_a_de, p_a_nde, p_d_de, p_d_nde, p_t_de, p_t_nde = input_block("p")
 
     st.markdown("---")
     
-    # ==========================================
-    # INPUT STEP 3: PROCESS DATA (FLOW & PRESSURE)
-    # ==========================================
-    st.subheader("🚰 3. Process & Hydraulic Data")
-    c_proc1, c_proc2 = st.columns(2)
+    # --- 3. PROCESS & SPECTRUM DATA ---
+    c_proc, c_spec = st.columns(2)
     
-    with c_proc1:
-        st.markdown("##### Pressure Reading")
+    with c_proc:
+        st.subheader("🚰 3. Process Data")
         suc = st.number_input("Suction Press (BarG)", value=0.5)
         dis = st.number_input("Discharge Press (BarG)", value=4.0)
+        act_flow_in = st.number_input("Actual Flow Reading", value=95.0)
         
-        # Kalkulasi Head Aktual
+        # Konversi Flow Aktual
+        act_flow_m3h = act_flow_in * 0.2271 if q_unit == "GPM" else act_flow_in
+        
+        # Live Calc
         diff = dis - suc
-        act_head_m = (diff * 10.2) / 0.85 # Asumsi SG 0.85
-        st.metric("Actual Head Est.", f"{act_head_m:.1f} m")
+        curr_head = (diff * 10.2) / 0.85
+        st.caption(f"Est. Actual Head: {curr_head:.1f} m | Act. Flow: {act_flow_m3h:.1f} m3/h")
 
-    with c_proc2:
-        st.markdown("##### Flow Meter Reading")
-        # Input Flow Aktual (Lapangan)
-        act_flow_input = st.number_input("Actual Flow Rate (Reading)", value=90.0)
-        
-        # Konversi Flow Aktual agar match dengan Design Flow
-        if q_unit == "GPM (US)":
-            act_flow_m3h = act_flow_input * 0.2271
-            st.caption(f"Running: {act_flow_m3h:.1f} m3/h")
-        else:
-            act_flow_m3h = act_flow_input
-
-    # Input Spektrum (Disembunyikan di expander biar rapi)
-    with st.expander("📈 Input Data Spektrum (Peak Picking)"):
-        peaks_data = []
-        for i in range(1, 4):
-            cc1, cc2 = st.columns(2)
-            f = cc1.number_input(f"Freq {i} (Hz)", key=f"pf_{i}")
-            a = cc2.number_input(f"Amp {i} (mm/s)", key=f"pa_{i}")
-            if f > 0: peaks_data.append({'freq': f, 'amp': a})
+    with c_spec:
+        st.subheader("📈 4. Peak Picking (Spectrum)")
+        with st.expander("Input 3 Puncak Tertinggi", expanded=True):
+            peaks_data = []
+            for i in range(1, 4):
+                cc1, cc2 = st.columns(2)
+                f = cc1.number_input(f"Freq {i} (Hz)", key=f"pf_{i}")
+                a = cc2.number_input(f"Amp {i} (mm/s)", key=f"pa_{i}")
+                if f > 0: peaks_data.append({'freq': f, 'amp': a})
 
     # ==========================================
-    # EXECUTION: GENERATE REPORT
+    # BAGIAN C: EXECUTION & REPORTING
     # ==========================================
-    if st.button("🚀 ANALYZE & GENERATE REPORT", type="primary", use_container_width=True):
+    if st.button("🚀 RUN COMPLETE DIAGNOSIS", type="primary", use_container_width=True):
         st.divider()
-        st.header(f"📊 Laporan Diagnosa: {p_manuf}")
+        st.title(f"📊 Reliability Report: {p_manuf}")
         
-        # Summary Header
-        c_sum1, c_sum2, c_sum3 = st.columns(3)
-        c_sum1.metric("Motor Power", f"{m_power_kw:.1f} kW")
-        c_sum2.metric("Running Speed", f"{m_rpm} RPM")
-        
-        # Hitung % Flow Operation
-        if design_flow_m3h > 0:
-            flow_pct = (act_flow_m3h / design_flow_m3h) * 100
-            c_sum3.metric("Operating Point", f"{flow_pct:.0f}% BEP")
+        # --- 1. DATA PROCESSING (Mencari Nilai Max/Avg) ---
+        max_vel = max(m_v_de, m_v_nde, p_v_de, p_v_nde)
+        max_acc = max(m_a_de, m_a_nde, p_a_de, p_a_nde)
+        max_disp = max(m_d_de, m_d_nde, p_d_de, p_d_nde)
+        max_temp_motor = max(m_t_de, m_t_nde)
+        max_temp_pump = max(p_t_de, p_t_nde)
 
-        # TABEL 1: VIBRATION ISO
-        st.subheader("1. Evaluasi Vibrasi (ISO 10816-3)")
+        # --- 2. MENJALANKAN 6 PILAR LOGIKA ---
+        
+        # [Jalur A] ISO Severity
+        iso_status = get_iso_remark(max_vel, limit_rms)
+        
+        # [Jalur B] Bearing Condition
+        bearing_status = "🔴 DAMAGED" if max_acc > 2.0 else ("🟡 WARNING" if max_acc > 1.0 else "🟢 GOOD")
+        
+        # [Jalur C] Hydraulic Logic
+        hyd_msgs = analyze_hydraulic_performance(suc, dis, design_head_m, act_flow_m3h, design_flow_m3h)
+        
+        # [Jalur D] Spectrum Logic
+        spec_msgs = analyze_spectrum_logic(m_rpm, peaks_data)
+        
+        # [Jalur E] Structural Logic
+        struct_status = "🔴 LOOSENESS RISK" if max_disp > 100 else "🟢 RIGID"
+        
+        # [Jalur F] Thermal Logic
+        therm_status = "🔴 OVERHEAT" if max_temp_motor > 80 else "🟢 NORMAL"
+
+        # --- 3. TAMPILAN DASHBOARD ---
+        
+        # Scorecard
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Vibration (ISO)", f"{max_vel:.2f} mm/s", iso_status)
+        col2.metric("Bearing Health", f"{max_acc:.2f} g", bearing_status)
+        col3.metric("Structure (Disp)", f"{max_disp:.0f} μm", struct_status)
+        col4.metric("Max Temp", f"{max_temp_motor:.1f} °C", therm_status)
+
+        # Tabel Detail Vibrasi
+        st.subheader("📋 Vibration Severity Table")
         vib_data = [
-            {"Point": "Driver", "Dir": "H", "DE": m_h_de, "NDE": m_h_nde, "Limit": limit_rms},
-            {"Point": "Driver", "Dir": "V", "DE": m_v_de, "NDE": m_v_nde, "Limit": limit_rms},
-            {"Point": "Driver", "Dir": "A", "DE": m_a_de, "NDE": m_a_nde, "Limit": limit_rms},
-            {"Point": "Driven", "Dir": "H", "DE": p_h_de, "NDE": p_h_nde, "Limit": limit_rms},
-            {"Point": "Driven", "Dir": "V", "DE": p_v_de, "NDE": p_v_nde, "Limit": limit_rms},
-            {"Point": "Driven", "Dir": "A", "DE": p_a_de, "NDE": p_a_nde, "Limit": limit_rms},
+            {"Point": "Motor DE", "Vel (mm/s)": m_v_de, "Acc (g)": m_a_de, "Disp (μm)": m_d_de, "Temp (°C)": m_t_de},
+            {"Point": "Motor NDE", "Vel (mm/s)": m_v_nde, "Acc (g)": m_a_nde, "Disp (μm)": m_d_nde, "Temp (°C)": m_t_nde},
+            {"Point": "Pump DE", "Vel (mm/s)": p_v_de, "Acc (g)": p_a_de, "Disp (μm)": p_d_de, "Temp (°C)": p_t_de},
+            {"Point": "Pump NDE", "Vel (mm/s)": p_v_nde, "Acc (g)": p_a_nde, "Disp (μm)": p_d_nde, "Temp (°C)": p_t_nde},
         ]
-        df_vib = pd.DataFrame(vib_data)
-        df_vib["Avr"] = (df_vib["DE"] + df_vib["NDE"]) / 2
-        df_vib["Remark"] = df_vib.apply(lambda x: get_iso_remark(x["Avr"], x["Limit"]), axis=1)
-        st.dataframe(df_vib.style.format({"DE": "{:.2f}", "NDE": "{:.2f}", "Avr": "{:.2f}", "Limit": "{:.2f}"}), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(vib_data), use_container_width=True)
 
-        # TABEL 2: DIAGNOSA KOMPREHENSIF
-        st.subheader("2. Kesimpulan Diagnosa")
+        # --- 4. REKOMENDASI CERDAS (CROSS-REFERENCE) ---
+        st.subheader("💡 Expert Recommendations (Root Cause)")
         
-        # Run Logic
-        spec_diag = analyze_spectrum_logic(m_rpm, peaks_data)
-        hyd_diag = analyze_hydraulic_performance(suc, dis, design_head_m, act_flow_m3h, design_flow_m3h)
-        
-        # Tampilkan Hasil
-        diag_summary = [
-            {"Domain": "Mekanikal (Spektrum)", "Hasil Analisa": spec_diag},
-            {"Domain": "Hidrolik & Proses", "Hasil Analisa": hyd_diag},
-        ]
-        st.table(pd.DataFrame(diag_summary))
-
-        # REKOMENDASI OTOMATIS
-        st.subheader("3. Rekomendasi Tindakan")
         rec_list = []
-        if "UNBALANCE" in spec_diag: rec_list.append("- Lakukan Balancing In-situ atau di Workshop.")
-        if "MISALIGNMENT" in spec_diag: rec_list.append("- Cek Softfoot & Lakukan Laser Alignment.")
-        if "LOW FLOW" in hyd_diag: rec_list.append("- Buka Valve Discharge perlahan atau cek saringan suction (Mencegah Recirculation).")
-        if "HIGH FLOW" in hyd_diag: rec_list.append("- Throttling valve discharge untuk mengembalikan ke kurva operasi (Mencegah Kavitasi).")
         
-        if not rec_list:
-            st.success("✅ Unit beroperasi dalam batas normal. Lanjutkan monitoring rutin.")
+        # Logika Gabungan (Sintesis)
+        
+        # 1. Thermal + Accel (Pelumasan vs Kerusakan)
+        if max_temp_motor > 60:
+            if max_acc < 1.0:
+                rec_list.append("🛢️ **LUBRICATION ISSUE:** Suhu Motor Tinggi tapi Vibrasi Bearing rendah. Indikasi Grease kering/kurang. Lakukan Regreasing segera.")
+            else:
+                rec_list.append("⚙️ **BEARING FAILURE:** Suhu Tinggi + Vibrasi Tinggi. Bearing mengalami kerusakan fisik & gesekan panas.")
+
+        # 2. Structural + Velocity
+        if max_disp > 100:
+            if max_vel < limit_rms:
+                rec_list.append("🏗️ **LOOSENESS:** Displacement tinggi tapi Velocity normal. Cek kekencangan Baut Pondasi (Anchor Bolt) & Frame.")
+            else:
+                rec_list.append("⚠️ **STRUCTURAL DAMAGE:** Displacement & Velocity tinggi. Unbalance/Misalignment sudah mengguncang struktur.")
+
+        # 3. Spectrum Specifics
+        for msg in spec_msgs:
+            if "UNBALANCE" in msg: rec_list.append("⚖️ **UNBALANCE:** Lakukan Cleaning Impeller & Balancing.")
+            if "MISALIGNMENT" in msg: rec_list.append("📏 **MISALIGNMENT:** Cek Softfoot & Lakukan Laser Alignment.")
+
+        # 4. Hydraulic Specifics
+        for msg in hyd_msgs:
+            if "LOW FLOW" in msg: rec_list.append("🌊 **FLOW ISSUE:** Buka Valve Discharge perlahan untuk mencegah Recirculation.")
+            if "HIGH FLOW" in msg: rec_list.append("🛑 **FLOW ISSUE:** Throttling valve discharge untuk mencegah Kavitasi.")
+            if "LOW HEAD" in msg: rec_list.append("🔧 **PUMP WEAR:** Cek clearance Wear Ring & Impeller.")
+
+        # Jika tidak ada masalah
+        if not rec_list and iso_status == "🟢 SATISFACTORY" and bearing_status == "🟢 GOOD":
+            st.success("✅ Unit dalam kondisi PRIMA. Tidak ada tindakan perbaikan yang diperlukan.")
         else:
             for rec in rec_list:
                 st.warning(rec)
