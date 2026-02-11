@@ -228,7 +228,7 @@ def render_mechanical_page():
         df["Avr"] = (df["DE"] + df["NDE"]) / 2
         
         # Hitung Remark (Logic berbeda tiap parameter)
-  def determine_row_remark(row):
+        def determine_row_remark(row):
             p = row['Param']
             val = row['Avr']
             lim = row['Limit']
