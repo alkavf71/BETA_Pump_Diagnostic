@@ -228,20 +228,26 @@ def render_mechanical_page():
         df["Avr"] = (df["DE"] + df["NDE"]) / 2
         
         # Hitung Remark (Logic berbeda tiap parameter)
-        def determine_row_remark(row):
+  def determine_row_remark(row):
             p = row['Param']
             val = row['Avr']
             lim = row['Limit']
             
-            if p in ['H', 'V', 'A']: # Velocity -> ISO Logic
+            # 1. Logika untuk Velocity (ISO 10816)
+            if p in ['H', 'V', 'A']: 
                 return get_iso_remark(val, lim)
-            elif p == 'Accel (g)': # Acceleration -> Bearing Logic
-                if val > 2.0: return "Danger (Bearing Damage)"
-                if val > 1.0: return "Warning (Lubrication)"
-                return "Good"
-            elif p == 'Disp (μm)': # Displacement -> Visual Limit
-                if val > 100: return "Check Stiffness"
-                return "Good"
+            
+            # 2. Logika untuk Acceleration (Bearing)
+            elif p == 'Accel (g)': 
+                if val > 2.0: return "Vibration causes damage" # Atau 'Bearing Damaged' jika ingin beda
+                if val > 1.0: return "Short-term operation allowable" # Atau 'Lubrication Required'
+                return "Unlimited long-term operation allowable"
+            
+            # 3. Logika untuk Displacement (Struktur)
+            elif p == 'Disp (μm)': 
+                if val > 100: return "Short-term operation allowable" # Visual Check
+                return "Unlimited long-term operation allowable"
+            
             return "-" # Untuk Temp
 
         df["Remark"] = df.apply(determine_row_remark, axis=1)
