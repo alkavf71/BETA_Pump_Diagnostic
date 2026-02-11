@@ -66,6 +66,24 @@ if mode == "🛠️ INSPEKSI RUTIN":
     with tab1:
         st.info(f"Limit vibrasi otomatis: **{asset.vib_limit_warning} mm/s** (ISO 20816 Group Based on {asset.power_kw} kW).")
         
+        # --- FITUR GAMBAR PANDUAN (UPDATED .png) ---
+        with st.expander("ℹ️ Lihat Peta Titik Pengukuran Vibrasi (Klik Disini)", expanded=False):
+            c_img1, c_img2 = st.columns([1, 2])
+            with c_img2:
+                # PERBAIKAN: Menggunakan .png sesuai file asli Bapak
+                try:
+                    st.image("titik_ukur.png", caption="Titik Tapping Point Vibrasi (ISO 10816)", use_container_width=True)
+                except:
+                    st.warning("⚠️ Gambar 'titik_ukur.png' tidak ditemukan. Pastikan file di-upload ke GitHub sejajar dengan main.py")
+            with c_img1:
+                st.markdown("""
+                **Panduan Singkat:**
+                1. **Motor DE/NDE:** Ambil 3 arah (H/V/A).
+                2. **Pump DE/NDE:** Ambil 3 arah (H/V/A).
+                3. **Pastikan Sensor:** Menempel kuat pada *Bearing Housing* (Besi Solid), bukan pada cover kipas/sirip.
+                """)
+        # --------------------------------------
+
         with st.form("mech_form"):
             col1, col2 = st.columns(2)
             
@@ -75,7 +93,6 @@ if mode == "🛠️ INSPEKSI RUTIN":
                 c1a, c1b = st.columns(2)
                 with c1a:
                     st.caption("Drive End (DE)")
-                    # Perbaikan: Tambahkan 'value=' agar angka 0.8 jadi default, bukan minimum
                     m_de_h = st.number_input("M-DE Horiz", value=0.8, step=0.1, min_value=0.0)
                     m_de_v = st.number_input("M-DE Vert", value=0.2, step=0.1, min_value=0.0)
                     m_de_a = st.number_input("M-DE Axial", value=0.5, step=0.1, min_value=0.0)
@@ -112,7 +129,6 @@ if mode == "🛠️ INSPEKSI RUTIN":
             with c_bot1:
                 st.subheader("3. Performa Hidrolik (Pressure)")
                 cp1, cp2, cp3 = st.columns(3)
-                # Pressure bisa negatif (Vakum) di suction, jadi min_value biarkan default/None
                 p_in = cp1.number_input("Suction (Bar):", value=0.5, step=0.1)
                 p_out = cp2.number_input("Discharge (Bar):", value=4.5, step=0.1)
                 sg = cp3.number_input("SG Fluid:", value=0.85, step=0.01, min_value=0.1)
@@ -124,7 +140,7 @@ if mode == "🛠️ INSPEKSI RUTIN":
                 cn1, cn2 = st.columns(2)
                 dba_val = cn1.number_input("Sound Level (dBA):", value=80.0, step=0.1, min_value=0.0)
                 dba_base = cn2.number_input("Baseline (dBA):", value=78.0, step=0.1, min_value=0.0)
-                noise_type = st.selectbox("Jenis Suara:", ["Normal / Halus", "Kavitasi", "Bearing Defect", "Mencicit"])
+                noise_type = st.selectbox("Jenis Suara:", ["Normal / Halus", "Kavitasi / Kerikil", "Bearing Defect / Gemuruh", "Mencicit / Squealing"])
 
             submit_mech = st.form_submit_button("🔍 ANALISA KESEHATAN MEKANIKAL FULL")
 
