@@ -8,26 +8,32 @@ import numpy as np
 
 def get_iso_remark(value_avg, limit):
     """
-    Menentukan Remark berdasarkan 4 Zona ISO 10816.
-    Limit User dianggap sebagai batas Trip (Zone D).
+    Menentukan Remark sesuai Legend Chart ISO 10816 (Gambar User).
+    
+    Klasifikasi:
+    - Zone D (> Limit)      : Vibration causes damage
+    - Zone C (60-100% Limit): Short-term operation allowable
+    - Zone B (30-60% Limit) : Unlimited long-term operation allowable
+    - Zone A (< 30% Limit)  : New machine condition
     """
-    # Zone D: Danger (> 100% Limit)
+    
+    # ZONE D: Merah (Bahaya)
     if value_avg > limit:
-        return "Zone D: Unacceptable (Damage Risk)"
+        return "Vibration causes damage"
     
-    # Zone C: Warning (40% - 100% Limit)
-    elif value_avg > (limit * 0.40):
-        if value_avg > (limit * 0.70):
-            return "Zone C (Upper): Restricted Operation"
-        return "Zone C (Lower): Unsatisfactory (Alert)"
+    # ZONE C: Oranye (Warning)
+    # Di grafik, batas C biasanya sekitar 60% dari batas Trip (Misal 2.8 dari 4.5)
+    elif value_avg > (limit * 0.60):
+        return "Short-term operation allowable"
     
-    # Zone B: Satisfactory (16% - 40% Limit)
-    elif value_avg > (limit * 0.16):
-         return "Zone B: Satisfactory (Unlimited)"
+    # ZONE B: Kuning (Aman Operasi)
+    # Di grafik, batas B biasanya sekitar 30% dari batas Trip (Misal 1.4 dari 4.5)
+    elif value_avg > (limit * 0.30):
+         return "Unlimited long-term operation allowable"
     
-    # Zone A: Excellent (< 16% Limit)
+    # ZONE A: Hijau (Sangat Bagus)
     else:
-         return "Zone A: Excellent / New Machine"
+         return "New machine condition"
 
 def analyze_bearing_condition(acc_val):
     """Analisa kondisi bearing berdasarkan Acceleration (g)"""
