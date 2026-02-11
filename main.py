@@ -1,155 +1,136 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime
 
 # --- IMPORT MODULES ---
-# Pastikan struktur folder Anda:
-# modules/asset_database.py
-# modules/inspection/mechanical.py
-# modules/inspection/electrical.py
-# modules/inspection/hydraulic.py
-# modules/health_logic.py (atau sesuaikan lokasi fungsi assess_overall_health)
-
 from modules.asset_database import get_asset_list, get_asset_details
 from modules.inspection.mechanical import MechanicalInspector
 from modules.inspection.electrical import ElectricalInspector
-from modules.inspection.hydraulic import HydraulicInspector
-
-# Jika file health_logic ada di folder modules langsung:
-try:
-    from modules.health_logic import assess_overall_health
-except ImportError:
-    # Fallback function jika file belum ada/path beda
-    def assess_overall_health(vib_stat, elec_stat, temp, phys, diags):
-        return {"status": "UNKNOWN", "color": "#ccc", "desc": "Logic belum terhubung", "action": "-", "reasons": [], "standards": []}
+from modules.inspection.hydraulic import HydraulicInspector # <--- IMPORT MODULE BARU
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Reliability Pro Enterprise", layout="wide", page_icon="🏭")
 
-# --- CSS UTILS ---
+# --- CSS UTILS (Untuk Warna Tabel Mekanikal) ---
 def highlight_row(row):
     remark = row.get('Remark', '')
     if "ZONE D" in remark: 
-        return ['background-color: #ffebee; color: #b71c1c']*len(row)
+        return ['background-color: #ffebee; color: #b71c1c']*len(row) # Merah Pucat
     elif "ZONE C" in remark: 
-        return ['background-color: #fffde7; color: #f57f17']*len(row)
+        return ['background-color: #fffde7; color: #f57f17']*len(row) # Kuning Pucat
     elif "ZONE A" in remark: 
-        return ['background-color: #e8f5e9; color: #1b5e20; font-weight: bold']*len(row)
+        return ['background-color: #e8f5e9; color: #1b5e20; font-weight: bold']*len(row) # Hijau Pucat
     else: 
-        return ['background-color: #ffffff; color: #212529']*len(row)
-
-# --- SESSION STATE ---
-if 'mech_result' not in st.session_state: st.session_state.mech_result = None
-if 'elec_result' not in st.session_state: st.session_state.elec_result = None
-if 'hydro_result' not in st.session_state: st.session_state.hydro_result = None
-if 'health_result' not in st.session_state: st.session_state.health_result = None
+        return ['background-color: #ffffff; color: #212529']*len(row) # Putih Normal
 
 # ==============================================================================
-# SIDEBAR
+# SIDEBAR: PILIH ASET
 # ==============================================================================
-with st.sidebar:
-    st.title("🏭 Reliability Pro")
-    st.caption("Standard: ISO 20816, IEC 60034, API 610")
-    
-    activity_type = st.radio("Jenis Aktivitas:", ["🛠️ INSPEKSI RUTIN", "🚀 COMMISSIONING"])
-    is_comm = "COMMISSIONING" in activity_type.upper()
-    
-    st.divider()
-    selected_tag = st.selectbox("Pilih Aset (Tag No):", get_asset_list())
-    asset = get_asset_details(selected_tag)
-    
-    with st.expander("ℹ️ Spesifikasi Aset", expanded=True):
-        st.markdown(f"**Nama:** {asset.name}")
-        st.markdown(f"**Type:** {asset.pump_type}")
-        st.markdown(f"**Power:** {asset.power_kw} kW")
-        st.markdown(f"**RPM:** {asset.rpm}")
-        st.markdown(f"**Elec:** {asset.volt_rated}V / {asset.fla_rated}A")
-        st.markdown("---")
-        st.markdown(f"**Limit (Warn):** `{asset.vib_limit_warning} mm/s`")
+st.sidebar.title("🏭 Reliability Pro")
+st.sidebar.subheader("Asset Selection")
+
+# 1. Load Database
+asset_names = get_asset_list()
+selected_tag = st.sidebar.selectbox("Pilih Aset / Tag Number:", asset_names)
+asset = get_asset_details(selected_tag)
+
+# 2. Tampilkan Spesifikasi Aset
+with st.sidebar.expander("ℹ️ Spesifikasi Aset", expanded=True):
+    st.markdown(f"**Nama:** {asset.name}")
+    st.markdown(f"**Type:** {asset.pump_type}")
+    st.markdown(f"**Power:** {asset.power_kw} kW")
+    st.markdown(f"**RPM:** {asset.rpm}")
+    st.markdown(f"**Elec:** {asset.volt_rated}V / {asset.fla_rated}A")
+    st.markdown("---")
+    st.markdown(f"**ISO Limit (Warn):** `{asset.vib_limit_warning} mm/s`")
+    st.markdown(f"**ISO Limit (Trip):** `{asset.vib_limit_alarm} mm/s`")
+
+mode = st.sidebar.radio("Mode Aplikasi:", ["🛠️ INSPEKSI RUTIN", "🚀 COMMISSIONING"])
 
 # ==============================================================================
-# MAIN CONTENT
+# MODE 1: INSPEKSI RUTIN
 # ==============================================================================
-st.title(f"Diagnosa Aset: {asset.tag}")
+if mode == "🛠️ INSPEKSI RUTIN":
+    st.title(f"🛠️ Inspeksi Rutin: {asset.tag}")
 
-if activity_type == "🛠️ INSPEKSI RUTIN":
-    
-    # Init Inspectors
+    # Init Inspectors dengan Parameter Aset
     mech_inspector = MechanicalInspector(vib_limit_warn=asset.vib_limit_warning)
     elec_inspector = ElectricalInspector()
-    hydro_inspector = HydraulicInspector()
+    hydro_inspector = HydraulicInspector() # <--- INIT INSPECTOR BARU
 
-    # Tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["⚙️ MEKANIKAL", "⚡ ELEKTRIKAL", "🌊 HIDROLIK", "🏥 KESIMPULAN"])
+    # Tab Menu
+    tab1, tab2, tab3 = st.tabs(["⚙️ MEKANIKAL & HIDROLIK", "⚡ ELEKTRIKAL", "👁️ VISUAL"])
 
     # --------------------------------------------------------------------------
-    # TAB 1: MEKANIKAL
+    # TAB 1: MEKANIKAL (Vibrasi, Suhu, Noise, Hidrolik)
     # --------------------------------------------------------------------------
     with tab1:
-        col1, col2 = st.columns([1.2, 1])
+        st.info(f"Limit vibrasi otomatis: **{asset.vib_limit_warning} mm/s** (ISO 20816 Group Based on {asset.power_kw} kW).")
         
-        with col1:
-            st.info(f"Limit ISO 20816: **{asset.vib_limit_warning} mm/s** (Berdasarkan Power {asset.power_kw} kW).")
+        with st.form("mech_form"):
+            col1, col2 = st.columns(2)
             
-            # Gambar Peta (Optional)
-            with st.expander("ℹ️ Lihat Peta Titik Pengukuran", expanded=False):
-                try:
-                    st.image("titik_ukur.png", use_container_width=True)
-                except:
-                    st.caption("Gambar titik_ukur.png tidak ditemukan.")
-
-            with st.form("mech_form"):
-                st.subheader("1. Data Vibrasi (mm/s)")
+            # 1. INPUT DRIVER (MOTOR)
+            with col1:
+                st.subheader("1. Driver (Motor)")
                 c1a, c1b = st.columns(2)
                 with c1a:
-                    st.markdown("**DRIVER (Motor)**")
-                    m_de_h = st.number_input("M-DE H", value=0.8, step=0.01, min_value=0.0)
-                    m_de_v = st.number_input("M-DE V", value=0.2, step=0.01, min_value=0.0)
-                    m_de_a = st.number_input("M-DE A", value=0.5, step=0.01, min_value=0.0)
-                    t_m_de = st.number_input("Temp M-DE (°C)", value=45.0, step=1.0, min_value=0.0)
+                    st.caption("Drive End (DE)")
+                    m_de_h = st.number_input("M-DE Horiz", 0.8)
+                    m_de_v = st.number_input("M-DE Vert", 0.2)
+                    m_de_a = st.number_input("M-DE Axial", 0.5)
+                    t_m_de = st.number_input("Temp M-DE (°C)", 45.0)
                 with c1b:
-                    st.markdown("**DRIVER (Motor NDE)**")
-                    m_nde_h = st.number_input("M-NDE H", value=0.9, step=0.01, min_value=0.0)
-                    m_nde_v = st.number_input("M-NDE V", value=0.3, step=0.01, min_value=0.0)
-                    m_nde_a = st.number_input("M-NDE A", value=0.4, step=0.01, min_value=0.0)
-                    t_m_nde = st.number_input("Temp M-NDE (°C)", value=42.0, step=1.0, min_value=0.0)
+                    st.caption("Non-Drive End (NDE)")
+                    m_nde_h = st.number_input("M-NDE Horiz", 0.9)
+                    m_nde_v = st.number_input("M-NDE Vert", 0.3)
+                    m_nde_a = st.number_input("M-NDE Axial", 0.4)
+                    t_m_nde = st.number_input("Temp M-NDE (°C)", 42.0)
 
-                st.markdown("---")
+            # 2. INPUT DRIVEN (POMPA)
+            with col2:
+                st.subheader("2. Driven (Pump)")
                 c2a, c2b = st.columns(2)
                 with c2a:
-                    st.markdown("**DRIVEN (Pompa)**")
-                    p_de_h = st.number_input("P-DE H", value=1.2, step=0.01, min_value=0.0)
-                    p_de_v = st.number_input("P-DE V", value=0.8, step=0.01, min_value=0.0)
-                    p_de_a = st.number_input("P-DE A", value=0.6, step=0.01, min_value=0.0)
-                    t_p_de = st.number_input("Temp P-DE (°C)", value=40.0, step=1.0, min_value=0.0)
+                    st.caption("Drive End (DE)")
+                    p_de_h = st.number_input("P-DE Horiz", 1.2)
+                    p_de_v = st.number_input("P-DE Vert", 0.8)
+                    p_de_a = st.number_input("P-DE Axial", 0.6)
+                    t_p_de = st.number_input("Temp P-DE (°C)", 40.0)
                 with c2b:
-                    st.markdown("**DRIVEN (Pompa NDE)**")
-                    p_nde_h = st.number_input("P-NDE H", value=0.7, step=0.01, min_value=0.0)
-                    p_nde_v = st.number_input("P-NDE Vert", value=0.4, step=0.01, min_value=0.0)
-                    p_nde_a = st.number_input("P-NDE Axial", value=0.3, step=0.01, min_value=0.0)
-                    t_p_nde = st.number_input("Temp P-NDE (°C)", value=38.0, step=1.0, min_value=0.0)
-
-                st.markdown("---")
-                st.subheader("2. Inspeksi Fisik & Noise")
+                    st.caption("Non-Drive End (NDE)")
+                    p_nde_h = st.number_input("P-NDE Horiz", 0.7)
+                    p_nde_v = st.number_input("P-NDE Vert", 0.4)
+                    p_nde_a = st.number_input("P-NDE Axial", 0.3)
+                    t_p_nde = st.number_input("Temp P-NDE (°C)", 38.0)
+            
+            st.markdown("---")
+            
+            # 3. INPUT HIDROLIK & NOISE (Dibuat berdampingan)
+            c_bot1, c_bot2 = st.columns(2)
+            
+            with c_bot1:
+                st.subheader("3. Performa Hidrolik (Pressure)")
+                cp1, cp2, cp3 = st.columns(3)
+                p_in = cp1.number_input("Suction (Bar):", value=0.5, step=0.1)
+                p_out = cp2.number_input("Discharge (Bar):", value=4.5, step=0.1)
+                sg = cp3.number_input("SG Fluid:", value=0.85, step=0.01)
                 
+                # Input Design Head (Nanti bisa diambil otomatis dari DB jika data lengkap)
+                design_head = st.number_input("Rated Head Design (m):", value=50.0, help="Lihat Nameplate")
+                
+            with c_bot2:
+                st.subheader("4. Akustik (Noise)")
                 cn1, cn2 = st.columns(2)
-                with cn1:
-                    noise_type = st.selectbox("Karakter Suara:", ["Normal / Halus", "Kavitasi / Kerikil", "Bearing Defect / Gemuruh", "Mencicit / Squealing"])
-                    noise_loc = st.selectbox("Lokasi Suara:", ["-", "Motor DE", "Motor NDE", "Pump DE", "Pump NDE", "Casing"])
-                with cn2:
-                    dba_val = st.number_input("Level Suara (dBA):", value=80.0, step=0.1)
-                    valve_test = st.radio("Valve Test:", ["Tidak Dilakukan", "Suara Stabil", "Berubah Drastis"], horizontal=True)
+                dba_val = cn1.number_input("Sound Level (dBA):", value=80.0, step=0.1)
+                dba_base = cn2.number_input("Baseline (dBA):", value=78.0, step=0.1)
+                noise_type = st.selectbox("Jenis Suara:", ["Normal / Halus", "Kavitasi", "Bearing Defect", "Mencicit"])
 
-                st.caption("Checklist Fisik:")
-                chk_seal = st.checkbox("MAJOR: Seal Bocor / Rembes")
-                chk_guard = st.checkbox("MAJOR: Guard Hilang")
-                chk_baut = st.checkbox("MINOR: Baut Kendor")
-                
-                submit_mech = st.form_submit_button("🔍 ANALISA MEKANIKAL")
+            submit_mech = st.form_submit_button("🔍 ANALISA KESEHATAN MEKANIKAL FULL")
 
+        # --- HASIL ANALISA ---
         if submit_mech:
-            # Prepare Inputs
+            # A. ANALISA VIBRASI
             inputs_vib = {
                 'm_de_h': m_de_h, 'm_de_v': m_de_v, 'm_de_a': m_de_a,
                 'm_nde_h': m_nde_h, 'm_nde_v': m_nde_v, 'm_nde_a': m_nde_a,
@@ -157,79 +138,115 @@ if activity_type == "🛠️ INSPEKSI RUTIN":
                 'p_nde_h': p_nde_h, 'p_nde_v': p_nde_v, 'p_nde_a': p_nde_a
             }
             inputs_temp = {'Motor DE': t_m_de, 'Motor NDE': t_m_nde, 'Pump DE': t_p_de, 'Pump NDE': t_p_nde}
-
-            # Call Logic
-            df_report, faults, max_vib = mech_inspector.analyze_vibration(inputs_vib)
             
-            # Logic Tambahan (Suhu & Noise yang terintegrasi di MechanicalInspector atau manual disini)
-            # Agar konsisten dengan file mechanical.py terakhir, kita gunakan fungsi analyze_full_health jika ada
-            # Jika tidak, kita gunakan logic manual disini:
-            
-            full_res = mech_inspector.analyze_full_health(inputs_vib, inputs_temp, noise_type)
-            
-            # Tambahkan Logic Fisik ke list Faults agar masuk laporan
-            phys_list = []
-            if chk_seal: phys_list.append("MAJOR: Seal Bocor")
-            if chk_guard: phys_list.append("MAJOR: Guard Hilang")
-            if chk_baut: phys_list.append("MINOR: Baut Kendor")
+            res_mech = mech_inspector.analyze_full_health(inputs_vib, inputs_temp, noise_type)
 
-            st.session_state.mech_result = {
-                "df": full_res['dataframe'],
-                "max_vib": full_res['max_vib'],
-                "faults": full_res['faults'],
-                "status": full_res['status'],
-                "temps": inputs_temp,
-                "phys": phys_list,
-                "noise": f"{noise_type} ({dba_val} dBA)"
-            }
+            # B. ANALISA HIDROLIK
+            res_hydro = hydro_inspector.analyze_performance(p_in, p_out, sg, design_head)
 
-        # OUTPUT MEKANIKAL
-        with col2:
-            if st.session_state.mech_result:
-                res = st.session_state.mech_result
+            st.divider()
+            
+            # --- LAYOUT HASIL ---
+            # Kiri: Tabel Vibrasi & Diagnosa Mekanikal
+            # Kanan: Diagnosa Hidrolik & Gauge Vibrasi
+            
+            res_c1, res_c2 = st.columns([1.5, 1])
+            
+            with res_c1:
+                st.markdown("#### 📋 Laporan Vibrasi & Suhu")
+                st.dataframe(
+                    res_mech['dataframe'].style.apply(highlight_row, axis=1)
+                    .format({"DE": "{:.2f}", "NDE": "{:.2f}", "Avr": "{:.2f}", "Limit": "{:.2f}"}),
+                    use_container_width=True, hide_index=True
+                )
                 
-                st.subheader("📋 Laporan Vibrasi")
-                st.dataframe(res['df'].style.apply(highlight_row, axis=1).format({"DE": "{:.2f}", "NDE": "{:.2f}", "Avr": "{:.2f}", "Limit": "{:.2f}"}), use_container_width=True, hide_index=True)
+                # Logic Safety Noise
+                delta_db = dba_val - dba_base
+                if dba_val > 85.0:
+                    st.error(f"🔊 **SAFETY ALERT:** {dba_val} dBA (Wajib Earplug - OSHA Limit).")
+                elif delta_db >= 6.0:
+                    st.warning(f"🔊 **NOISE WARNING:** Naik +{delta_db:.1f} dB. Indikasi degradasi.")
+
+                # Diagnosa Multi-Fault Mekanikal
+                if res_mech['faults']:
+                    st.error("🚨 **DIAGNOSA MEKANIKAL:**")
+                    for f in res_mech['faults']:
+                        with st.expander(f"⚠️ {f['name']}", expanded=True):
+                            st.info(f"**Pemicu:** {f.get('trigger', '-')}")
+                            st.markdown(f"**Analisa:** {f['desc']}")
+                            st.markdown(f"**Action:** {f['action']}")
+                else:
+                    st.success("✅ Mekanikal Sehat (Vibrasi & Suhu Normal).")
+
+            with res_c2:
+                st.markdown("#### 🌊 Performa Hidrolik")
                 
-                c_g1, c_g2 = st.columns([1, 2])
-                with c_g1:
-                    fig = go.Figure(go.Indicator(
-                        mode="gauge+number", value=res['max_vib'], title={'text': "Max Avr"},
-                        gauge={'axis': {'range': [0, 10]}, 'bar': {'color': "black"}, 'steps': [{'range': [0, asset.vib_limit_warning], 'color': '#e8f5e9'}, {'range': [asset.vib_limit_warning, 7.1], 'color': '#fffde7'}, {'range': [7.1, 10], 'color': '#ffebee'}]}
-                    ))
-                    fig.update_layout(height=180, margin=dict(t=30,b=20,l=20,r=20))
-                    st.plotly_chart(fig, use_container_width=True)
+                # Metric Head
+                st.metric(
+                    label="Actual Total Head",
+                    value=f"{res_hydro['actual_head']:.1f} m",
+                    delta=f"{res_hydro['deviation']:.1f}% vs Design"
+                )
                 
-                with c_g2:
-                    st.info(f"**STATUS: {res['status']}**")
-                    if res['faults']:
-                        for f in res['faults']:
-                            with st.expander(f"⚠️ {f['name']}", expanded=True):
-                                st.write(f"**Analisa:** {f['desc']}")
-                                st.write(f"**Action:** {f['action']}")
-                    if res['phys']:
-                         st.warning("⚠️ **FISIK:** " + ", ".join(res['phys']))
+                # Status Card Hidrolik
+                if res_hydro['status'] == "NORMAL":
+                    st.success(f"**{res_hydro['status']}**")
+                    st.caption(res_hydro['desc'])
+                else:
+                    st.warning(f"**{res_hydro['status']}**")
+                    st.markdown(f"**Analisa:** {res_hydro['desc']}")
+                    st.markdown(f"**Action:** {res_hydro['action']}")
+
+                st.markdown("---")
+                
+                # Gauge Vibrasi
+                fig = go.Figure(go.Indicator(
+                    mode = "gauge+number", value = res_mech['max_vib'], title = {'text': "Max Vib (mm/s)"},
+                    gauge = {
+                        'axis': {'range': [0, asset.vib_limit_alarm * 1.5]},
+                        'bar': {'color': "black"},
+                        'steps': [
+                            {'range': [0, asset.vib_limit_warning], 'color': "#e8f5e9"},
+                            {'range': [asset.vib_limit_warning, asset.vib_limit_alarm], 'color': "#fffde7"},
+                            {'range': [asset.vib_limit_alarm, asset.vib_limit_alarm * 1.5], 'color': "#ffebee"}
+                        ],
+                        'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': asset.vib_limit_warning}
+                    }
+                ))
+                fig.update_layout(height=200, margin=dict(t=10,b=10,l=10,r=10))
+                st.plotly_chart(fig, use_container_width=True)
 
     # --------------------------------------------------------------------------
-    # TAB 2: ELEKTRIKAL
+    # TAB 2: ELEKTRIKAL (Modern UI)
     # --------------------------------------------------------------------------
     with tab2:
-        with st.form("elec_form"):
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown(f"**Voltase ({asset.volt_rated}V)**")
-                v_rs = st.number_input("R-S", value=float(asset.volt_rated), step=1.0)
-                v_st = st.number_input("S-T", value=float(asset.volt_rated), step=1.0)
-                v_tr = st.number_input("T-R", value=float(asset.volt_rated), step=1.0)
-                t_body = st.number_input("Temp Body Motor (°C)", value=55.0, step=1.0)
-            with c2:
-                st.markdown(f"**Ampere ({asset.fla_rated}A)**")
-                i_r = st.number_input("Phase R", value=float(asset.fla_rated)*0.8, step=0.1)
-                i_s = st.number_input("Phase S", value=float(asset.fla_rated)*0.8, step=0.1)
-                i_t = st.number_input("Phase T", value=float(asset.fla_rated)*0.8, step=0.1)
-            
-            submit_elec = st.form_submit_button("⚡ ANALISA ELEKTRIKAL")
+        # Header Info
+        c_info1, c_info2 = st.columns([3, 1])
+        with c_info1:
+            st.markdown(f"### ⚡ Motor Health Monitor: **{asset.name}**")
+        with c_info2:
+            st.caption(f"Rated: **{asset.volt_rated} V / {asset.fla_rated} A**")
 
+        # Input Form (Expander)
+        with st.expander("📝 Input Data Pengukuran (Klik untuk Buka/Tutup)", expanded=True):
+            with st.form("elec_form"):
+                ce1, ce2 = st.columns(2)
+                with ce1:
+                    st.markdown("**1. Tegangan (Volt Phase-to-Phase)**")
+                    c_v1, c_v2, c_v3 = st.columns(3)
+                    v_rs = c_v1.number_input("R-S", value=float(asset.volt_rated), step=1.0)
+                    v_st = c_v2.number_input("S-T", value=float(asset.volt_rated), step=1.0)
+                    v_tr = c_v3.number_input("T-R", value=float(asset.volt_rated), step=1.0)
+                with ce2:
+                    st.markdown("**2. Arus Beban (Ampere)**")
+                    c_i1, c_i2, c_i3 = st.columns(3)
+                    i_r = c_i1.number_input("R", value=float(asset.fla_rated)*0.8, step=0.1)
+                    i_s = c_i2.number_input("S", value=float(asset.fla_rated)*0.8, step=0.1)
+                    i_t = c_i3.number_input("T", value=float(asset.fla_rated)*0.8, step=0.1)
+                    
+                submit_elec = st.form_submit_button("⚡ ANALISA KUALITAS DAYA")
+
+        # Dashboard Hasil
         if submit_elec:
             vol_inputs = [v_rs, v_st, v_tr]
             amp_inputs = [i_r, i_s, i_t]
@@ -238,95 +255,78 @@ if activity_type == "🛠️ INSPEKSI RUTIN":
                 vol_inputs, amp_inputs, asset.volt_rated, asset.fla_rated
             )
             
-            # Logic Tambahan Suhu Body
-            if t_body > 90.0:
-                elec_faults.append({"name": "OVERHEAT BODY", "val": f"{t_body}C", "desc": "Suhu body tinggi.", "action": "Cek Pendinginan."})
-            
-            st.session_state.elec_result = {"df": df_elec, "faults": elec_faults, "status": elec_status, "load": load_pct}
+            # Helper metrics
+            v_avg = sum(vol_inputs)/3
+            i_avg = sum(amp_inputs)/3
+            v_unbal_val = float(df_elec.loc[df_elec['Parameter']=='Unbalance V', 'Value'].values[0].replace(' %',''))
+            i_unbal_val = float(df_elec.loc[df_elec['Parameter']=='Unbalance I', 'Value'].values[0].replace(' %',''))
 
-        if st.session_state.elec_result:
-            res = st.session_state.elec_result
-            col_m1, col_m2 = st.columns(2)
-            with col_m1:
-                st.dataframe(res['df'], use_container_width=True, hide_index=True)
-            with col_m2:
-                fig_load = go.Figure(go.Indicator(mode="gauge+number", value=res['load'], title={'text':"Load %"}, gauge={'axis':{'range':[0,120]}, 'bar':{'color':'black'}, 'steps':[{'range':[0,100], 'color':'#e8f5e9'}, {'range':[100,120], 'color':'#ffebee'}]}))
-                fig_load.update_layout(height=200, margin=dict(t=30,b=20,l=20,r=20))
-                st.plotly_chart(fig_load, use_container_width=True)
-            
-            if res['faults']:
-                for f in res['faults']: st.error(f"🚨 **{f['name']}:** {f['desc']} -> {f['action']}")
+            st.divider()
+
+            # 1. STATUS CARD
+            if elec_status == "NORMAL":
+                st.markdown("""<div style="padding:15px; border-radius:10px; background-color:#e8f5e9; border-left: 6px solid #2ecc71;">
+                    <h3 style="color:#1b5e20; margin:0;">✅ SYSTEM HEALTHY</h3><p style="margin:0;">Kualitas daya listrik aman (IEC 60034).</p></div>""", unsafe_allow_html=True)
+            elif elec_status == "WARNING":
+                st.markdown("""<div style="padding:15px; border-radius:10px; background-color:#fff3cd; border-left: 6px solid #ffc107;">
+                    <h3 style="color:#856404; margin:0;">⚠️ WARNING ALERT</h3><p style="margin:0;">Penyimpangan parameter terdeteksi.</p></div>""", unsafe_allow_html=True)
+            else:
+                st.markdown("""<div style="padding:15px; border-radius:10px; background-color:#f8d7da; border-left: 6px solid #dc3545;">
+                    <h3 style="color:#721c24; margin:0;">🚨 CRITICAL FAULT</h3><p style="margin:0;">Bahaya! Parameter trip/safety terlampaui.</p></div>""", unsafe_allow_html=True)
+
+            st.write("") 
+
+            # 2. KEY METRICS
+            km1, km2, km3, km4 = st.columns(4)
+            with km1: st.metric("Avg Voltage", f"{v_avg:.1f} V", f"{v_avg - asset.volt_rated:.1f} V")
+            with km2: 
+                d_color = "normal" if v_unbal_val < 1.0 else "inverse"
+                st.metric("Volt Unbalance", f"{v_unbal_val:.2f}%", "Max 1.0%", delta_color=d_color)
+            with km3: st.metric("Avg Current", f"{i_avg:.1f} A")
+            with km4:
+                l_color = "normal" if load_pct < 100 else "inverse"
+                st.metric("Motor Load", f"{load_pct:.1f}%", "Max 100%", delta_color=l_color)
+
+            st.markdown("---")
+
+            # 3. VISUAL BALANCE CHECK (CHARTS)
+            col_chart1, col_chart2 = st.columns(2)
+
+            with col_chart1:
+                st.subheader("📊 Voltage Balance")
+                fig_v = go.Figure()
+                fig_v.add_trace(go.Bar(x=['R-S', 'S-T', 'T-R'], y=vol_inputs, marker_color='#4285F4', text=vol_inputs, textposition='auto'))
+                fig_v.add_hline(y=asset.volt_rated, line_dash="dot", annotation_text="Rated", line_color="green")
+                min_v, max_v = min(vol_inputs)*0.95, max(vol_inputs)*1.05
+                fig_v.update_layout(yaxis_range=[min_v, max_v], height=250, margin=dict(t=10,b=10,l=10,r=10))
+                st.plotly_chart(fig_v, use_container_width=True)
+
+            with col_chart2:
+                st.subheader("📊 Current Balance")
+                fig_i = go.Figure()
+                colors_i = ['#FF5252' if x > asset.fla_rated else '#FFB74D' for x in amp_inputs]
+                fig_i.add_trace(go.Bar(x=['R', 'S', 'T'], y=amp_inputs, marker_color=colors_i, text=amp_inputs, textposition='auto'))
+                fig_i.add_hline(y=asset.fla_rated, line_dash="dash", annotation_text="Max FLA", line_color="red")
+                fig_i.update_layout(height=250, margin=dict(t=10,b=10,l=10,r=10))
+                st.plotly_chart(fig_i, use_container_width=True)
+
+            # 4. DIAGNOSA DETAIL
+            if elec_faults:
+                st.error("🚨 **DETIL DIAGNOSA & REKOMENDASI**")
+                for f in elec_faults:
+                    with st.expander(f"🔴 ISU: {f['name']} ({f['val']})", expanded=True):
+                        st.markdown(f"**Analisa:** {f['desc']}")
+                        st.markdown(f"**Action:** {f['action']}")
 
     # --------------------------------------------------------------------------
-    # TAB 3: HIDROLIK
+    # TAB 3: VISUAL
     # --------------------------------------------------------------------------
     with tab3:
-        with st.form("hydro_form"):
-            c1, c2, c3 = st.columns(3)
-            p_in = c1.number_input("Suction (Bar)", value=0.5, step=0.1)
-            p_out = c2.number_input("Discharge (Bar)", value=4.5, step=0.1)
-            sg = c3.number_input("SG Fluid", value=0.85, step=0.01)
-            head_des = st.number_input("Design Head (m)", value=50.0, step=1.0)
-            submit_hydro = st.form_submit_button("🌊 ANALISA HIDROLIK")
-        
-        if submit_hydro:
-            res_hydro = hydro_inspector.analyze_performance(p_in, p_out, sg, head_des)
-            st.session_state.hydro_result = res_hydro
-
-        if st.session_state.hydro_result:
-            res = st.session_state.hydro_result
-            c1, c2 = st.columns(2)
-            c1.metric("Actual Head", f"{res['actual_head']:.1f} m", f"{res['deviation']:.1f}%")
-            if "NORMAL" in res['status']:
-                c2.success(f"**{res['status']}**")
-            else:
-                c2.error(f"**{res['status']}**\n\n{res['desc']}")
-
-    # --------------------------------------------------------------------------
-    # TAB 4: KESIMPULAN
-    # --------------------------------------------------------------------------
-    with tab4:
-        if st.button("GENERATE FINAL REPORT"):
-            if st.session_state.mech_result:
-                mech = st.session_state.mech_result
-                elec = st.session_state.elec_result
-                
-                # Mapping data ke format Health Logic
-                vib_status = "ZONE D" if "D:" in mech['status'] else "ZONE C" if "C:" in mech['status'] else "ZONE A"
-                elec_status = "TRIP" if (elec and elec['faults']) else "NORMAL"
-                
-                # Gabung semua diagnosa teknis
-                all_diags = [f['name'] for f in mech['faults']]
-                if elec and elec['faults']: all_diags += [f['name'] for f in elec['faults']]
-                
-                health = assess_overall_health(
-                    vib_status, 
-                    elec_status, 
-                    max(mech['temps'].values()), 
-                    mech['phys'], 
-                    all_diags
-                )
-                st.session_state.health_result = health
-            else:
-                st.warning("Jalankan Mekanikal Dulu.")
-
-        if st.session_state.health_result:
-            hr = st.session_state.health_result
-            st.markdown(f"""<div style="background:{'#d4edda' if 'GOOD' in hr['status'] else '#f8d7da'};padding:20px;border-radius:10px;text-align:center;border:2px solid {hr['color']};"><h1 style='color:{hr['color']}'>{hr['status']}</h1><h3>{hr['desc']}</h3><hr>{hr['action']}</div>""", unsafe_allow_html=True)
-            
-            c1, c2 = st.columns(2)
-            with c1:
-                st.error("### ROOT CAUSE")
-                for r in hr['reasons']: st.write(f"❌ {r}")
-            with c2:
-                st.warning("### REKOMENDASI")
-                for rec in hr['recommendations']: st.write(f"🔧 {rec}")
-            
-            st.caption("Standards: " + ", ".join(hr['standards']))
+        st.info("Fitur Visual & Safety Check (Segera Hadir di Update Berikutnya)")
 
 # ==============================================================================
 # MODE 2: COMMISSIONING
 # ==============================================================================
 elif mode == "🚀 COMMISSIONING":
-    st.title("🚀 Commissioning Mode")
-    st.info("Modul Commissioning (API 686 / 676 Check) akan diimplementasikan selanjutnya.")
+    st.title(f"🚀 Commissioning Check: {asset.tag}")
+    st.warning("Modul Commissioning sedang dalam tahap pengembangan.")
