@@ -7,14 +7,19 @@ import numpy as np
 # ==========================================
 # Catatan: Semua fungsi di sini HANYA menerima satuan SI (kW, Meter, m3/hr)
 
-def get_iso_limit_suggestion(kw):
+def get_iso_limit_suggestion(kw, is_flexible=False):
     """
-    Menyarankan Limit ISO 10816-3 berdasarkan Power (kW).
-    Standard: ISO 10816-3 Group 1 (>300kW) & Group 2 (15-300kW).
+    Logika Penentuan Limit ISO 10816-3 (Group 1 & 2).
+    Group 2 (15-300 kW): Rigid=4.5, Flexible=7.1
+    Group 1 (>300 kW)  : Rigid=7.1, Flexible=11.0
     """
-    if kw > 300: return 4.50 
-    elif 15 <= kw <= 300: return 4.50 
-    else: return 4.50 # Default safe limit
+    if kw < 15:
+        return 4.50 # Default untuk mesin kecil (<15kW biasanya pakai rule of thumb)
+        
+    if 15 <= kw <= 300: # Group 2 (Medium)
+        return 7.10 if is_flexible else 4.50
+    else: # Group 1 (Large > 300kW)
+        return 11.0 if is_flexible else 7.10
 
 def get_iso_remark(value_avg, limit):
     """Logika Penilaian Severity ISO 10816"""
@@ -98,24 +103,34 @@ def render_mechanical_page():
     with col_spec_motor:
         st.info("🔌 Spesifikasi Motor (Driver)")
         
-        # --- INPUT POWER DENGAN PILIHAN SATUAN ---
+        # Input Power & RPM
         c1, c2 = st.columns([0.7, 0.3])
         p_val = c1.number_input("Rated Power", value=30.0)
         p_unit = c2.selectbox("Satuan", ["kW", "HP"])
         
-        # [LOGIC KONVERSI] Power ke kW
         if p_unit == "HP":
             m_power_kw = p_val * 0.7457
-            st.caption(f"ℹ️ Konversi: {p_val} HP = {m_power_kw:.2f} kW")
         else:
             m_power_kw = p_val
             
         m_rpm = st.number_input("Rated Speed (RPM)", value=2950)
         
-        # Auto-Suggest Limit ISO berdasarkan kW yang sudah dikonversi
-        iso_suggest = get_iso_limit_suggestion(m_power_kw)
-        st.caption(f"💡 Limit ISO (Group 2/1): {iso_suggest} mm/s")
-        limit_rms = st.number_input("Limit Velocity Trip (mm/s)", value=iso_suggest)
+        # --- FITUR SMART LIMIT ---
+        st.write("---")
+        st.caption("🏗️ Tipe Pondasi (Untuk Auto-Limit ISO)")
+        # Checkbox untuk Flexible Foundation
+        is_flex = st.checkbox("Flexible Foundation? (Skid/Rubber/Lantai Atas)")
+        
+        # Panggil fungsi Smart Limit
+        auto_limit = get_iso_limit_suggestion(m_power_kw, is_flex)
+        
+        # Tampilkan Limit (User tetap bisa edit manual kalau mau kustom)
+        limit_rms = st.number_input("⚠️ ISO Vibration Limit (Trip)", value=auto_limit, step=0.1)
+        
+        if is_flex:
+            st.caption(f"ℹ️ Mode Flexible: Limit dilonggarkan ke {auto_limit} mm/s")
+        else:
+            st.caption(f"ℹ️ Mode Rigid (Default): Limit ketat di {auto_limit} mm/s")
 
     with col_spec_pump:
         st.success("💧 Spesifikasi Pompa (Driven)")
