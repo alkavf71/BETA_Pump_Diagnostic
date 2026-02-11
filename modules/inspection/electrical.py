@@ -3,25 +3,48 @@ import numpy as np
 
 class ElectricalInspector:
     """
-    MODULE INSPEKSI ELEKTRIKAL
-    Standards:
-    - IEC 60034-1 (Rating & Performance)
-    - NEMA MG-1 (Voltage Unbalance Limits)
+    MODULE INSPEKSI ELEKTRIKAL (Logic Layer)
+    
+    Standards Reference:
+    1. IEC 60034-1: Rotating Electrical Machines - Rating and Performance.
+       - Batas toleransi tegangan supply: +/- 5% (Zone A).
+       - Batas overload arus (Service Factor).
+    2. NEMA MG-1: Motors and Generators.
+       - Definisi Voltage Unbalance & Derating Factor.
+       - Rule of thumb: 1% V-Unbalance = 6-10% I-Unbalance.
+    3. IEEE / Fluke Guidelines:
+       - Batas aman Voltage Unbalance (2%).
+       - Batas aman Current Unbalance (10%).
     """
     
     def __init__(self):
-        # Limit Standar IEC 60034-1 (Sesuai TKI)
-        self.limit_v_unbalance_warn = 2.0 # % (Zone A Limit - IEC)
-        self.limit_v_unbalance_trip = 5.0 # % (Zone B Limit - Danger)
+        # --- THRESHOLDS (BATAS AMAN) ---
         
-        self.limit_i_unbalance_warn = 10.0 
-        self.voltage_tolerance = 0.05 # +/- 5% (Zone A Voltage Variation)
+        # 1. Voltage Unbalance (IEC 60034-1)
+        # Zone A (Aman): 0 - 2%
+        # Zone B (Warning/Derating): > 2%
+        # Critical: > 5% (Resiko lilitan terbakar tinggi)
+        self.limit_v_unbal_warn = 2.0 
+        self.limit_v_unbal_trip = 5.0
+        
+        # 2. Current Unbalance (NEMA/IEEE)
+        # 10% adalah indikator umum kesehatan motor/koneksi
+        self.limit_i_unbal_warn = 10.0
+        
+        # 3. Voltage Deviation (IEC 60034-1 Zone A)
+        # Toleransi tegangan masuk +/- 5% dari Nameplate
+        self.volt_tolerance = 0.05 
 
-    def _calc_unbalance(self, values):
+        # 4. Ground Fault (Safety)
+        # > 0.5 Ampere bocor ke tanah dianggap bahaya
+        self.limit_ground_fault = 0.5
+
+    def _calc_nema_unbalance(self, values):
         """
-        Rumus NEMA: (Max Deviation from Avg) / Avg * 100
+        Menghitung % Unbalance menggunakan metode NEMA MG-1.
+        Rumus: (Max Deviation from Average / Average) * 100
         """
-        avg = sum(values) / 3
+        avg = np.mean(values)
         if avg == 0: return 0.0, 0.0
         
         max_dev = max([abs(v - avg) for v in values])
@@ -30,106 +53,128 @@ class ElectricalInspector:
 
     def analyze_health(self, vol_inputs, amp_inputs, rated_vol, rated_fla):
         """
-        Input: 
-        - vol_inputs: list [V_rs, V_st, V_tr]
-        - amp_inputs: list [I_r, I_s, I_t]
-        - rated_vol: dari Database Aset (misal 380V)
-        - rated_fla: dari Database Aset (misal 45A)
+        Fungsi Utama Diagnosa Kesehatan Elektrikal.
+        
+        Args:
+            vol_inputs (list): [V_rs, V_st, V_tr]
+            amp_inputs (list): [I_r, I_s, I_t]
+            rated_vol (float): Tegangan Nameplate (misal 380V)
+            rated_fla (float): Full Load Ampere Nameplate
+            
+        Returns:
+            df_report (DataFrame): Tabel data olahan untuk UI
+            faults (list): Daftar diagnosa kerusakan
+            status (str): Status Global (NORMAL/WARNING/CRITICAL)
+            load_pct (float): Persentase pembebanan motor
         """
         
-        # 1. HITUNG UNBALANCE
-        v_unbal, v_avg = self._calc_unbalance(vol_inputs)
-        i_unbal, i_avg = self._calc_unbalance(amp_inputs)
-        
-        # 2. DIAGNOSA LOGIC
         faults = []
         status = "NORMAL"
 
-# A. Cek Voltage Unbalance (IEC 60034-1)
-        if v_unbal > self.limit_v_unbalance_trip:
+        # --- 1. PROSES DATA (CALCULATION) ---
+        v_unbal, v_avg = self._calc_nema_unbalance(vol_inputs)
+        i_unbal, i_avg = self._calc_nema_unbalance(amp_inputs)
+        max_amp = max(amp_inputs)
+        
+        # Hitung % Load (Pembebanan)
+        if rated_fla > 0:
+            load_pct = (max_amp / rated_fla) * 100
+        else:
+            load_pct = 0.0
+
+        # --- 2. LOGIC DIAGNOSA (RULE BASED) ---
+
+        # A. VOLTAGE UNBALANCE (IEC 60034 / NEMA)
+        # Ketimpangan tegangan adalah pembunuh utama motor (Overheat).
+        if v_unbal > self.limit_v_unbal_trip:
             faults.append({
                 "name": "CRITICAL VOLTAGE UNBALANCE",
                 "val": f"{v_unbal:.2f}%",
-                "desc": "Bahaya! Unbalance > 5% (Luar Zone B). Risiko lilitan terbakar.",
-                "action": "🔴 STOP MOTOR. Cek Sumber Listrik."
+                "desc": "Ketimpangan tegangan > 5%. Suhu lilitan akan naik drastis.",
+                "action": "🔴 STOP MOTOR SEGERA. Periksa Sumber Listrik (Trafo/Genset) & Sambungan Panel."
             })
             status = "CRITICAL"
-            
-        elif v_unbal > self.limit_v_unbalance_warn:
+        elif v_unbal > self.limit_v_unbal_warn:
             faults.append({
-                "name": "VOLTAGE UNBALANCE",
+                "name": "VOLTAGE UNBALANCE (Zone B)",
                 "val": f"{v_unbal:.2f}%",
-                "desc": "Unbalance > 2% (Masuk Zone B). Perlu Derating beban.",
-                "action": "⚠️ Cek pembagian beban 1-fasa. Kurangi beban motor."
+                "desc": "Ketimpangan tegangan > 2%. Masuk area Derating (IEC 60034).",
+                "action": "⚠️ Kurangi beban motor (Derating). Cek pembagian beban 1-fasa di panel distribusi."
             })
-            if status == "NORMAL": status = "WARNING"
+            if status != "CRITICAL": status = "WARNING"
 
-        # B. Cek Current Unbalance
+        # B. CURRENT UNBALANCE (Kesehatan Lilitan/Koneksi)
+        # Jika tegangan seimbang tapi arus timpang -> Masalah di Motor/Kabel.
         if i_unbal > self.limit_i_unbalance_warn:
-            # Pastikan bukan karena motor mati (Arus kecil)
+            # Pastikan motor tidak dalam kondisi mati/load sangat rendah (false alarm)
             if i_avg > 1.0: 
                 faults.append({
                     "name": "HIGH CURRENT UNBALANCE",
                     "val": f"{i_unbal:.2f}%",
-                    "desc": "Arus antar fasa timpang (>10%).",
-                    "action": "⚡ Cek Tahanan Isolasi (Megger) & Resistansi Lilitan. Cek Kontak Breaker."
+                    "desc": "Arus antar fasa tidak seimbang (>10%) padahal tegangan relatif stabil.",
+                    "action": "⚡ Cek 'Loose Connection' (Kabel kendor) di terminal box. Lakukan Megger Test (Indikasi Short Turn)."
                 })
-                if status == "NORMAL": status = "WARNING"
+                if status != "CRITICAL": status = "WARNING"
 
-        # C. Cek Overload (Overcurrent)
-        # IEC 60034: Motor tidak boleh beroperasi terus menerus di atas Rated Current
-        max_amp = max(amp_inputs)
-        load_pct = (max_amp / rated_fla) * 100
-        
-        if max_amp > (rated_fla * 1.05): # Toleransi 5% bacaan alat
+        # C. OVERLOAD (IEC 60034 Rating)
+        # Cek apakah arus melebihi rating nameplate
+        # Toleransi 5% untuk fluktuasi sesaat
+        if max_amp > (rated_fla * 1.05):
             faults.append({
-                "name": "OVERLOAD / OVERCURRENT",
-                "val": f"{load_pct:.1f}% FLA",
-                "desc": f"Arus aktual ({max_amp:.1f}A) melebihi Nameplate ({rated_fla}A).",
-                "action": "📉 Kurangi beban pompa (Throttling). Cek masalah mekanis (Bearing/Alignment)."
+                "name": "OVERLOAD (OVERCURRENT)",
+                "val": f"{max_amp:.1f} A",
+                "desc": f"Arus aktual melebihi Nameplate ({rated_fla} A). Panas berlebih pada lilitan.",
+                "action": "📉 Kurangi beban pompa (Cek BJ fluida / Valve Discharge). Cek Bearing macet."
             })
             status = "CRITICAL"
 
-        # D. Cek Voltage Deviation (Under/Over Voltage)
-        # IEC Zone A: +/- 5% dari Rated
-        v_min_limit = rated_vol * (1 - self.voltage_tolerance)
-        v_max_limit = rated_vol * (1 + self.voltage_tolerance)
+        # D. VOLTAGE DEVIATION (Under/Over Voltage)
+        # IEC 60034 Zone A: Tegangan harus dalam range +/- 5%
+        v_min = rated_vol * (1 - self.volt_tolerance)
+        v_max = rated_vol * (1 + self.volt_tolerance)
         
-        if v_avg < v_min_limit:
+        if v_avg < v_min:
             faults.append({
                 "name": "UNDER VOLTAGE",
                 "val": f"{v_avg:.1f} V",
-                "desc": f"Tegangan supply terlalu rendah (<{v_min_limit:.0f}V). Arus akan naik.",
-                "action": "🔌 Naikkan Tap Trafo. Cek drop tegangan kabel."
+                "desc": f"Tegangan supply drop di bawah batas {v_min:.0f}V (-5%). Arus akan naik untuk kompensasi daya.",
+                "action": "🔌 Naikkan Tap Trafo atau cek ukuran kabel supply (Voltage Drop)."
             })
-            if status == "NORMAL": status = "WARNING"
-        elif v_avg > v_max_limit:
+            if status != "CRITICAL": status = "WARNING"
+        elif v_avg > v_max:
             faults.append({
                 "name": "OVER VOLTAGE",
                 "val": f"{v_avg:.1f} V",
-                "desc": f"Tegangan supply terlalu tinggi (>{v_max_limit:.0f}V). Core loss meningkat.",
+                "desc": f"Tegangan supply terlalu tinggi di atas {v_max:.0f}V (+5%). Saturasi inti besi (Core Loss).",
                 "action": "🔌 Turunkan Tap Trafo."
             })
-            if status == "NORMAL": status = "WARNING"
+            if status != "CRITICAL": status = "WARNING"
 
-        # E. Single Phasing (Salah satu arus 0)
-        if (min(amp_inputs) < 1.0) and (max(amp_inputs) > 5.0):
+        # E. SINGLE PHASING (Kehilangan 1 Fasa)
+        # Deteksi ekstrim: Salah satu arus 0 atau sangat kecil dibanding yang lain
+        if (min(amp_inputs) < 0.5) and (max(amp_inputs) > 5.0):
              faults.append({
                 "name": "SINGLE PHASING",
-                "val": "0 Amp",
-                "desc": "Hilang satu fasa! Motor mendengung dan akan terbakar hitungan menit.",
-                "action": "🔴 STOP EMERGENCY. Cek Sekering/Kabel Putus."
+                "val": "Phase Loss",
+                "desc": "Satu fasa hilang! Motor mendengung keras dan cepat panas.",
+                "action": "🔴 STOP EMERGENCY. Cek Sekering (Fuse) putus atau Kontaktor rusak."
             })
              status = "CRITICAL"
 
-        # 3. DATA REPORT
+        # --- 3. SUSUN DATAFRAME LAPORAN ---
         report_data = {
-            "Parameter": ["Voltage R-S", "Voltage S-T", "Voltage T-R", "Avg Voltage", "Unbalance V", 
-                          "Current R", "Current S", "Current T", "Avg Current", "Unbalance I", "Load %"],
-            "Value": [f"{vol_inputs[0]:.1f} V", f"{vol_inputs[1]:.1f} V", f"{vol_inputs[2]:.1f} V", f"{v_avg:.1f} V", f"{v_unbal:.2f} %",
-                      f"{amp_inputs[0]:.1f} A", f"{amp_inputs[1]:.1f} A", f"{amp_inputs[2]:.1f} A", f"{i_avg:.1f} A", f"{i_unbal:.2f} %", f"{load_pct:.1f} %"],
-            "Limit": [f"±5% ({rated_vol}V)", f"±5% ({rated_vol}V)", f"±5% ({rated_vol}V)", "-", "< 1.0 %",
-                      f"Max {rated_fla}A", f"Max {rated_fla}A", f"Max {rated_fla}A", "-", "< 10 %", "100 %"]
+            "Parameter": [
+                "Tegangan R-S", "Tegangan S-T", "Tegangan T-R", "Rata-rata Tegangan", "Unbalance Volt",
+                "Arus R", "Arus S", "Arus T", "Rata-rata Arus", "Unbalance Arus", "Load %"
+            ],
+            "Nilai Aktual": [
+                f"{vol_inputs[0]:.1f} V", f"{vol_inputs[1]:.1f} V", f"{vol_inputs[2]:.1f} V", f"{v_avg:.1f} V", f"{v_unbal:.2f} %",
+                f"{amp_inputs[0]:.1f} A", f"{amp_inputs[1]:.1f} A", f"{amp_inputs[2]:.1f} A", f"{i_avg:.1f} A", f"{i_unbal:.2f} %", f"{load_pct:.1f} %"
+            ],
+            "Limit / Standar": [
+                f"Rated {rated_vol}V", f"Rated {rated_vol}V", f"Rated {rated_vol}V", f"±5% ({v_min:.0f}-{v_max:.0f}V)", "< 2.0 % (IEC)",
+                "-", "-", "-", f"Max {rated_fla}A", "< 10 %", "Max 100 %"
+            ]
         }
         df = pd.DataFrame(report_data)
 
