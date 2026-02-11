@@ -3,15 +3,33 @@ import pandas as pd
 import numpy as np
 
 # --- 1. FUNGSI LOGIKA & ALGORITMA (THE BRAIN) ---
-
 def get_remark(value_avg, limit):
-    """Menentukan Remark untuk Tabel Laporan"""
+    """
+    Menentukan Remark berdasarkan 4 Zona ISO 10816.
+    Rasio batas zona dikalibrasi sesuai standar Class I (Small Machines) referensi user:
+    
+    - Limit (User Input) = Batas C/D (Trip) = 100%
+    - Batas B/C (Alert)  = 1.8 / 4.5 = 0.40 (40% dari Limit)
+    - Batas A/B (New)    = 0.71 / 4.5 ≈ 0.16 (16% dari Limit)
+    """
+    # ZONE D: > 100% Limit (BAHAYA)
     if value_avg > limit:
-        return "Vibration causes damage"
-    elif value_avg > (limit * 0.7):
-        return "Short-term operation allowable"
+        return "Zone D: Unacceptable (Damage Risk)"
+    
+    # ZONE C: 40% - 100% Limit (WARNING)
+    elif value_avg > (limit * 0.40):
+        # Kita tetap bisa kasih sub-notifikasi jika sudah parah (>70%)
+        if value_avg > (limit * 0.70):
+            return "Zone C (Upper): Restricted Operation (Plan Maintenance)"
+        return "Zone C: Unsatisfactory (Alert)"
+    
+    # ZONE B: 16% - 40% Limit (AMAN)
+    elif value_avg > (limit * 0.16):
+         return "Zone B: Satisfactory (Unlimited Operation)"
+    
+    # ZONE A: < 16% Limit (SANGAT BAGUS/BARU)
     else:
-        return "Unlimited long-term operation allowable"
+         return "Zone A: Excellent / New Machine Condition"
 
 def analyze_spectrum(rpm, peaks):
     """
