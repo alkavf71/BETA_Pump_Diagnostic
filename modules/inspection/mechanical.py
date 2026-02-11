@@ -2,210 +2,191 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# --- 1. LOGIC & ALGORITHM FUNCTION ---
+# --- 1. FUNGSI LOGIKA & PERHITUNGAN ---
 
-def get_iso10816_remark(velocity_rms, limit_rms):
+def get_remark(value_avg, limit):
     """
-    Memberikan Remark berdasarkan limit perusahaan.
+    Menentukan Remark berdasarkan logic:
+    Jika Avg > Limit -> Vibration causes damage
+    Jika Avg <= Limit -> Unlimited long-term operation
+    (Logic disederhanakan sesuai screenshot Anda)
     """
-    # Logika sederhana berdasarkan gambar user
-    # Jika limit 4.5, maka > 4.5 adalah danger/damage
-    
-    if velocity_rms <= limit_rms:
-        return "Unlimited long-term operation allowable"
-    elif velocity_rms <= (limit_rms * 2.5): # Asumsi Zone C (Warning)
+    if value_avg > limit:
+        return "Vibration causes damage"
+    elif value_avg > (limit * 0.7): # Zone Warning (Opsional)
         return "Short-term operation allowable"
     else:
-        return "Vibration causes damage"
+        return "Unlimited long-term operation allowable"
 
-def analyze_comprehensive(data_report, spec_limit):
+def analyze_conclusion(df_report):
     """
-    Menganalisa seluruh data frame untuk membuat kesimpulan naratif.
+    Membuat kesimpulan narasi otomatis dari data tabel.
     """
     issues = []
     
-    # 1. Cek Driver (Motor)
-    motor_h_avr = data_report.loc['Driver', 'H']['Avr']
-    motor_v_avr = data_report.loc['Driver', 'V']['Avr']
-    motor_a_avr = data_report.loc['Driver', 'A']['Avr']
+    # Filter baris yang remark-nya "Vibration causes damage"
+    damage_rows = df_report[df_report['Remark'] == "Vibration causes damage"]
     
-    if max(motor_h_avr, motor_v_avr, motor_a_avr) > spec_limit:
-        issues.append("🔴 **MOTOR (Driver) High Vibration:** Rata-rata vibrasi motor melebihi batas yang diizinkan.")
-        if motor_h_avr > motor_v_avr:
-             issues.append("   - Dominasi arah Horizontal pada motor mengindikasikan kemungkinan **Unbalance** atau masalah kekakuan struktur.")
-        if motor_a_avr > motor_v_avr and motor_a_avr > motor_h_avr:
-             issues.append("   - Dominasi arah Axial pada motor sering dikaitkan dengan **Misalignment** poros.")
-
-    # 2. Cek Driven (Pump)
-    pump_h_avr = data_report.loc['Driven', 'H']['Avr']
-    pump_v_avr = data_report.loc['Driven', 'V']['Avr']
-    pump_a_avr = data_report.loc['Driven', 'A']['Avr']
-    
-    if max(pump_h_avr, pump_v_avr, pump_a_avr) > spec_limit:
-        issues.append("🔴 **POMPA (Driven) High Vibration:** Rata-rata vibrasi pompa melebihi batas.")
-        if pump_v_avr > pump_h_avr:
-             issues.append("   - Dominasi arah Vertikal pada pompa bisa mengindikasikan **Looseness** (kelonggaran kaki/baut).")
-
-    # 3. Kesimpulan Umum
-    if not issues:
-        return "✅ **KONDISI AMAN:** Semua parameter vibrasi berada di bawah batas limit (Allowable). Peralatan layak operasi jangka panjang."
+    if not damage_rows.empty:
+        for index, row in damage_rows.iterrows():
+            comp = row['Component']
+            param = row['Param']
+            val = row['Avr']
+            issues.append(f"🔴 **{comp} - {param}:** Nilai rata-rata {val:.2f} mm/s (High Vibration).")
+            
+        return "⚠️ **KESIMPULAN:** Ditemukan indikasi vibrasi tinggi yang berpotensi merusak peralatan. Segera lakukan pengecekan detail (Spectrum Analysis) pada titik-titik di atas."
     else:
-        intro = "⚠️ **KESIMPULAN INSPEKSI:**\nDitemukan anomali sebagai berikut:\n"
-        return intro + "\n".join(issues)
+        return "✅ **KESIMPULAN:** Peralatan beroperasi dalam batas aman (Allowable). Tidak ditemukan anomali vibrasi yang signifikan."
 
-# --- 2. MAIN UI FUNCTION ---
+# --- 2. TAMPILAN UTAMA (UI) ---
 
 def render_mechanical_page():
-    st.title("🔧 Mechanical Diagnostics Report")
+    st.header("🔍 Mechanical Inspection Input")
+    st.caption("Masukkan data sesuai pembacaan alat (DE & NDE berdampingan).")
     st.markdown("---")
 
-    # --- A. SETTING LIMIT & SPEC ---
-    with st.expander("⚙️ Equipment Specification & Limits", expanded=True):
-        col1, col2 = st.columns(2)
-        eq_tag = col1.text_input("Tag Number", "P-101A")
-        limit_val = col2.number_input("Limit RMS (mm/s)", value=4.5, help="Standard ISO 10816 Zone Boundary")
+    # --- BAGIAN 1: SETTING LIMIT ---
+    with st.expander("⚙️ Konfigurasi Standar & Limit", expanded=False):
+        c_set1, c_set2 = st.columns(2)
+        eq_tag = c_set1.text_input("Tag Number", "P-101A")
+        limit_rms = c_set2.number_input("Limit Velocity RMS (mm/s)", value=4.50, step=0.1)
 
-    # --- B. INPUT DATA (TABULAR) ---
-    st.subheader("📝 Input Data Pengukuran")
-    
-    # Kita bagi dua kolom besar: DRIVER (Motor) & DRIVEN (Pompa)
+    # --- BAGIAN 2: FORM INPUT (SATU HALAMAN) ---
+    # Kita buat 2 kolom besar: KIRI (Driver) dan KANAN (Driven)
     col_driver, col_driven = st.columns(2)
-    
-    # --- INPUT DRIVER (MOTOR) ---
-    with col_driver:
-        st.info("⚡ DRIVER (Motor)")
-        # Horizontal
-        c1, c2 = st.columns(2)
-        m_h_de = c1.number_input("Horiz - DE (mm/s)", key="m_h_de")
-        m_h_nde = c2.number_input("Horiz - NDE (mm/s)", key="m_h_nde")
-        # Vertical
-        c3, c4 = st.columns(2)
-        m_v_de = c3.number_input("Vert - DE (mm/s)", key="m_v_de")
-        m_v_nde = c4.number_input("Vert - NDE (mm/s)", key="m_v_nde")
-        # Axial
-        c5, c6 = st.columns(2)
-        m_a_de = c5.number_input("Axial - DE (mm/s)", key="m_a_de")
-        m_a_nde = c6.number_input("Axial - NDE (mm/s)", key="m_a_nde")
-        # Temperature
-        c7, c8 = st.columns(2)
-        m_t_de = c7.number_input("Temp - DE (°C)", key="m_t_de")
-        m_t_nde = c8.number_input("Temp - NDE (°C)", key="m_t_nde")
 
-    # --- INPUT DRIVEN (POMPA) ---
+    # --- A. KOLOM DRIVER (MOTOR) ---
+    with col_driver:
+        st.subheader("⚡ DRIVER (Motor)")
+        st.info("Input Data Motor")
+        
+        # Grid layout untuk input yang rapi: Label | Input DE | Input NDE
+        # Baris 1: Horizontal
+        st.markdown("**1. Horizontal (mm/s)**")
+        c1, c2 = st.columns(2)
+        m_h_de = c1.number_input("DE - Horiz", key="m_h_de", help="Motor DE Horizontal")
+        m_h_nde = c2.number_input("NDE - Horiz", key="m_h_nde", help="Motor NDE Horizontal")
+        
+        # Baris 2: Vertical
+        st.markdown("**2. Vertical (mm/s)**")
+        c3, c4 = st.columns(2)
+        m_v_de = c3.number_input("DE - Vert", key="m_v_de")
+        m_v_nde = c4.number_input("NDE - Vert", key="m_v_nde")
+
+        # Baris 3: Axial
+        st.markdown("**3. Axial (mm/s)**")
+        c5, c6 = st.columns(2)
+        m_a_de = c5.number_input("DE - Axial", key="m_a_de")
+        m_a_nde = c6.number_input("NDE - Axial", key="m_a_nde")
+
+        # Baris 4: Temperature
+        st.markdown("**4. Temperature (°C)**")
+        c7, c8 = st.columns(2)
+        m_t_de = c7.number_input("DE - Temp", key="m_t_de", step=1)
+        m_t_nde = c8.number_input("NDE - Temp", key="m_t_nde", step=1)
+
+    # --- B. KOLOM DRIVEN (POMPA) ---
     with col_driven:
-        st.success("💧 DRIVEN (Pompa)")
-        # Horizontal
+        st.subheader("💧 DRIVEN (Pompa)")
+        st.success("Input Data Pompa")
+
+        # Baris 1: Horizontal
+        st.markdown("**1. Horizontal (mm/s)**")
         p1, p2 = st.columns(2)
-        p_h_de = p1.number_input("Horiz - DE (mm/s)", key="p_h_de")
-        p_h_nde = p2.number_input("Horiz - NDE (mm/s)", key="p_h_nde")
-        # Vertical
+        p_h_de = p1.number_input("DE - Horiz", key="p_h_de")
+        p_h_nde = p2.number_input("NDE - Horiz", key="p_h_nde")
+        
+        # Baris 2: Vertical
+        st.markdown("**2. Vertical (mm/s)**")
         p3, p4 = st.columns(2)
-        p_v_de = p3.number_input("Vert - DE (mm/s)", key="p_v_de")
-        p_v_nde = p4.number_input("Vert - NDE (mm/s)", key="p_v_nde")
-        # Axial
+        p_v_de = p3.number_input("DE - Vert", key="p_v_de")
+        p_v_nde = p4.number_input("NDE - Vert", key="p_v_nde")
+
+        # Baris 3: Axial
+        st.markdown("**3. Axial (mm/s)**")
         p5, p6 = st.columns(2)
-        p_a_de = p5.number_input("Axial - DE (mm/s)", key="p_a_de")
-        p_a_nde = p6.number_input("Axial - NDE (mm/s)", key="p_a_nde")
-        # Temperature
+        p_a_de = p5.number_input("DE - Axial", key="p_a_de")
+        p_a_nde = p6.number_input("NDE - Axial", key="p_a_nde")
+
+        # Baris 4: Temperature
+        st.markdown("**4. Temperature (°C)**")
         p7, p8 = st.columns(2)
-        p_t_de = p7.number_input("Temp - DE (°C)", key="p_t_de")
-        p_t_nde = p8.number_input("Temp - NDE (°C)", key="p_t_nde")
+        p_t_de = p7.number_input("DE - Temp", key="p_t_de", step=1)
+        p_t_nde = p8.number_input("NDE - Temp", key="p_t_nde", step=1)
 
     st.markdown("---")
     
-    # --- C. INPUT HYDRAULIC ---
-    st.subheader("🚰 Hydraulic Data")
-    h1, h2 = st.columns(2)
-    suc_press = h1.number_input("Suction Pressure (BarG)", value=0.5)
-    dis_press = h2.number_input("Discharge Pressure (BarG)", value=4.0)
+    # --- C. HYDRAULIC & BUTTON ---
+    col_h, col_btn = st.columns([1, 2])
+    with col_h:
+        st.markdown("##### 🚰 Hydraulic Pressure")
+        suc = st.number_input("Suction (BarG)", value=0.5)
+        dis = st.number_input("Discharge (BarG)", value=4.0)
+    
+    with col_btn:
+        st.markdown("##### 🚀 Action")
+        st.markdown("Klik tombol di bawah untuk memproses tabel laporan.")
+        process_btn = st.button("GENERATE REPORT & ANALYSIS", type="primary", use_container_width=True)
 
-    # --- BUTTON GENERATE REPORT ---
-    if st.button("📄 GENERATE FINAL REPORT", type="primary"):
-        
-        st.markdown("## 📊 Laporan Inspeksi Getaran")
-        st.caption(f"Tag Number: {eq_tag} | Standard Limit: {limit_val} mm/s")
+    # --- 3. OUTPUT REPORT (HANYA MUNCUL JIKA TOMBOL DIKLIK) ---
+    if process_btn:
+        st.divider()
+        st.header("📊 Laporan Hasil Inspeksi")
+        st.write(f"**Equipment:** {eq_tag} | **Standard Limit:** {limit_rms} mm/s")
 
-        # --- 1. PROSES DATA AGAR SEPERTI GAMBAR ---
-        # Helper untuk menghitung rata-rata
-        def calc_avg(val1, val2):
-            return (val1 + val2) / 2 if (val1 > 0 or val2 > 0) else 0
+        # --- MEMBANGUN DATAFRAME (TABEL) ---
+        # Helper function hitung rata-rata
+        def calc_avg(v1, v2):
+            return (v1 + v2) / 2
 
-        # Struktur Data untuk Tabel
-        data = {
-            'Component': ['Driver', 'Driver', 'Driver', 'Driver', 'Driven', 'Driven', 'Driven', 'Driven'],
-            'Param': ['H', 'V', 'A', 'Temp (°C)', 'H', 'V', 'A', 'Temp (°C)'],
-            'DE': [m_h_de, m_v_de, m_a_de, m_t_de, p_h_de, p_v_de, p_a_de, p_t_de],
-            'NDE': [m_h_nde, m_v_nde, m_a_nde, m_t_nde, p_h_nde, p_v_nde, p_a_nde, p_t_nde],
-        }
-        
-        df = pd.DataFrame(data)
-        
-        # Hitung Average
-        df['Avr'] = df.apply(lambda row: calc_avg(row['DE'], row['NDE']), axis=1)
-        
-        # Tambah Kolom Limit
-        df['Limits RMS'] = limit_val
-        # Khusus baris Temperature, Limit biasanya beda (misal 80 C), tapi di gambar Anda kosong/tidak ada limit vibrasi.
-        # Kita kosongkan limit vibrasi untuk baris Temp
-        df.loc[df['Param'] == 'Temp (°C)', 'Limits RMS'] = np.nan
+        # Data disusun list of dictionary
+        data_rows = [
+            # DRIVER ROWS
+            {"Component": "Driver", "Param": "H", "DE": m_h_de, "NDE": m_h_nde, "Limit": limit_rms},
+            {"Component": "Driver", "Param": "V", "DE": m_v_de, "NDE": m_v_nde, "Limit": limit_rms},
+            {"Component": "Driver", "Param": "A", "DE": m_a_de, "NDE": m_a_nde, "Limit": limit_rms},
+            {"Component": "Driver", "Param": "T (°C)", "DE": m_t_de, "NDE": m_t_nde, "Limit": None}, # Temp no limit logic yet
+            # DRIVEN ROWS
+            {"Component": "Driven", "Param": "H", "DE": p_h_de, "NDE": p_h_nde, "Limit": limit_rms},
+            {"Component": "Driven", "Param": "V", "DE": p_v_de, "NDE": p_v_nde, "Limit": limit_rms},
+            {"Component": "Driven", "Param": "A", "DE": p_a_de, "NDE": p_a_nde, "Limit": limit_rms},
+            {"Component": "Driven", "Param": "T (°C)", "DE": p_t_de, "NDE": p_t_nde, "Limit": None},
+        ]
 
-        # Tambah Kolom Remark
-        def determine_remark(row):
-            if row['Param'] == 'Temp (°C)':
-                return "-" # Skip temperatur untuk remark vibrasi
-            return get_iso10816_remark(row['Avr'], limit_val)
+        df = pd.DataFrame(data_rows)
 
-        df['Remark'] = df.apply(determine_remark, axis=1)
+        # Hitung Kolom Avr
+        df["Avr"] = df.apply(lambda x: calc_avg(x["DE"], x["NDE"]), axis=1)
 
-        # --- 2. DISPLAY TABEL (STYLE MIRIP EXCEL PERUSAHAAN) ---
-        # Kita pivot/set index agar tampilannya rapi grouped by Driver/Driven
-        
-        # Format angka 2 desimal
+        # Hitung Kolom Remark
+        def fill_remark(row):
+            if row["Param"] == "T (°C)":
+                return "-"
+            return get_remark(row["Avr"], row["Limit"])
+
+        df["Remark"] = df.apply(fill_remark, axis=1)
+
+        # RAPIKAN TABEL (Reorder Columns sesuai gambar)
+        # Format angka agar 2 desimal di tampilan
         st.dataframe(
-            df.style.format({
-                "DE": "{:.2f}", 
-                "NDE": "{:.2f}", 
-                "Avr": "{:.2f}",
-                "Limits RMS": "{:.2f}"
+            df[["Component", "Param", "DE", "NDE", "Avr", "Limit", "Remark"]].style.format({
+                "DE": "{:.2f}", "NDE": "{:.2f}", "Avr": "{:.2f}", "Limit": "{:.2f}"
             }),
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            height=300 # Agar tabel terlihat penuh
         )
 
-        # --- 3. ANALISA HYDRAULIC ---
-        st.markdown("### 🚰 Hydraulic Performance")
-        diff_head = dis_press - suc_press
-        col_res1, col_res2, col_res3 = st.columns(3)
-        col_res1.metric("Suction", f"{suc_press} Bar")
-        col_res2.metric("Discharge", f"{dis_press} Bar")
-        col_res3.metric("Differential Pressure", f"{diff_head:.2f} Bar")
+        # --- KESIMPULAN & ANALISA ---
+        st.markdown("### 📝 Analisa & Rekomendasi")
         
-        if diff_head < 1.0:
-            st.warning("⚠️ **Low Performance:** Selisih tekanan sangat rendah. Cek Impeller/RPM.")
-        
-        # --- 4. KESIMPULAN AKHIR & REKOMENDASI ---
-        st.markdown("### 📝 Kesimpulan & Rekomendasi")
-        
-        # Persiapan data untuk fungsi analisa logika
-        # Kita ubah DF jadi MultiIndex agar mudah diambil datanya oleh fungsi analyze_comprehensive
-        df_analysis = df.set_index(['Component', 'Param'])
-        
-        # Panggil fungsi analisa
-        conclusion_text = analyze_comprehensive(df_analysis, limit_val)
-        
-        st.info(conclusion_text)
-        
-        # Rekomendasi General (Hardcoded logic based on conclusion)
-        if "High Vibration" in conclusion_text:
-            st.markdown("""
-            **Rekomendasi Tindakan:**
-            1. 🔍 Lakukan pengecekan spektrum (FFT) untuk memastikan jenis kerusakan (Unbalance/Misalign).
-            2. 🔧 Cek kekencangan baut pondasi (Soft foot check).
-            3. 📏 Cek alignment poros saat unit stop.
-            """)
+        # 1. Analisa Vibrasi
+        vibration_conclusion = analyze_conclusion(df)
+        st.info(vibration_conclusion)
+
+        # 2. Analisa Pressure
+        diff_press = dis - suc
+        if diff_press < 1.0:
+            st.warning(f"⚠️ **Hydraulic Issue:** Differential Pressure rendah ({diff_press} Bar). Cek performa pompa.")
         else:
-             st.markdown("""
-            **Rekomendasi Tindakan:**
-            1. ✅ Pertahankan kondisi operasi.
-            2. 📅 Lakukan monitoring rutin bulan depan.
-            """)
+            st.success(f"✅ **Hydraulic:** Tekanan operasi normal (Diff: {diff_press} Bar).")
